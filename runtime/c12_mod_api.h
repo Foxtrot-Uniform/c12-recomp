@@ -22,7 +22,7 @@
 #pragma once
 #include <stdint.h>
 
-#define C12_MOD_API_VERSION 5   /* check api->version >= the version your mod was written for */
+#define C12_MOD_API_VERSION 6   /* check api->version >= the version your mod was written for */
 
 #ifdef __cplusplus
 extern "C" {
@@ -125,6 +125,10 @@ typedef struct C12ModApi {
      * set by the VR mod each frame (null = not tracked), read with vr_get_hand (0 = none). */
     void (*vr_set_hand)(int hand, const C12VrPose* pose);
     int (*vr_get_hand)(int hand, C12VrPose* pose);
+    /* ---- version 6 ---- */
+    /* When the pictures of the next vr_render will be shown (time_now() clock: the headset's predicted
+     * display time). The scene is blended to that moment, on a steady timeline. 0 = the time of the call. */
+    void (*vr_set_display_time)(double t);
 } C12ModApi;
 
 #ifdef __cplusplus
