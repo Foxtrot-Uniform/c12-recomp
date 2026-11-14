@@ -5,6 +5,7 @@
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
 #include <windows.h>
+#include "region.h"
 #include "psx.h"
 #include "c12_mod_api.h"
 #include "../third_party/imgui/imgui.h"
@@ -15,8 +16,10 @@ static std::vector<void (*)(void)> g_frame_cbs;
 void mods_note_module(void* m);
 
 static void api_log(const char* msg) { logf("[mod] %s\n", msg); }
-static int api_hook(uint32_t addr, C12HookFn fn) { return hook_set(addr, (HookFn)fn) ? 1 : 0; }
-static void api_call(uint32_t addr) { Ctx* c = &g_ctx; u32 ra = c->r[31]; guest_call(c, addr); c->r[31] = ra; }
+// mods name game code by PAL addresses: a US build translates them (region.h)
+static int api_hook(uint32_t addr, C12HookFn fn) { return hook_set(GA(addr), (HookFn)fn) ? 1 : 0; }
+static void api_call(uint32_t addr) { Ctx* c = &g_ctx; u32 ra = c->r[31]; guest_call(c, GA(addr)); c->r[31] = ra; }
+static uint32_t api_addr(uint32_t pal) { return GA(pal); }
 static uint32_t api_r32(uint32_t a) { return mem_r32(&g_ctx, a); }
 static void api_w32(uint32_t a, uint32_t v) { mem_w32(&g_ctx, a, v); }
 static void api_on_frame(void (*cb)(void)) { g_frame_cbs.push_back(cb); }
@@ -160,6 +163,8 @@ void mods_init() {
     api.log = api_log;
     api.hook = api_hook;
     api.call = api_call;
+    api.addr = api_addr;
+    api.region = C12_REGION_NAME;
     api.read32 = api_r32;
     api.write32 = api_w32;
     api.on_frame = api_on_frame;

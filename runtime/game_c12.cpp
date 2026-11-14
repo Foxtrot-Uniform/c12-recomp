@@ -9,15 +9,16 @@
 #define NOMINMAX
 #include <windows.h>
 #include "psx.h"
+#include "region.h"
 #include <unordered_map>
 #include <math.h>
 #include "costack.h"
 #include "savestate.h"
 
-#define G_FIBRE_BASE 0x800cb670u   // sp of the frame that started/resumed the running fibre
-#define G_FIBRE_CUR 0x800ef4c4u    // running fibre struct
-#define FN_FIBRE_LOCK 0x800358e8u
-#define FN_FIBRE_EPILOGUE 0x80035b08u
+#define G_FIBRE_BASE GA(0x800cb670u)   // sp of the frame that started/resumed the running fibre
+#define G_FIBRE_CUR GA(0x800ef4c4u)    // running fibre struct
+#define FN_FIBRE_LOCK GA(0x800358e8u)
+#define FN_FIBRE_EPILOGUE GA(0x80035b08u)
 
 enum { FS_RUNNING, FS_YIELDED, FS_FINISHED, FS_EXITCALL };
 struct HostFibre {
@@ -50,7 +51,7 @@ static void switch_to(HostFibre* t) {
 static void fibre_proc(void* p) {
     HostFibre* hf = (HostFibre*)p;
     Ctx* c = &g_ctx;
-    c->r[31] = 0x80035a04;
+    c->r[31] = GA(0x80035a04);
     call_indirect(c, hf->entry);
     hf->state = FS_FINISHED;
     switch_to(hf->resumer);
@@ -134,7 +135,7 @@ static void hook_fibre_start(Ctx* c, RecompFn) {
     wr(sp + 12, a2);
     c->r[4] = 0;
     c->r[5] = 0;
-    c->r[31] = 0x800359d4;
+    c->r[31] = GA(0x800359d4);
     call_indirect(c, FN_FIBRE_LOCK);
     u32 f = rd(G_FIBRE_CUR);
     u32 flags = mem_r16(c, f);
@@ -174,7 +175,7 @@ static void hook_fibre_resume(Ctx* c, RecompFn) {
     for (int i = 0; i < 8; i++) c->r[16 + i] = rd(f + 8 + i * 4);
     c->r[30] = rd(f + 0x28);
     c->r[25] = rd(f + 4);
-    c->r[31] = 0x80035ad0;
+    c->r[31] = GA(0x80035ad0);
     c->r[29] = sp;
     hf->resumer = g_cur_fibre;
     hf->state = FS_RUNNING;
@@ -261,7 +262,7 @@ void fibres_state(StateIO& s) {
 // ---- frame pacing ----------------------------------------------------------------------------
 // libetc's VSync wait is a calibrated busy loop that times out on a faster CPU. Replace it by
 // skipping emulated time straight to the next event: no timeouts at any CPU speed, no host CPU burn.
-#define G_VCOUNT 0x800ee388u
+#define G_VCOUNT GA(0x800ee388u)
 void idle_until_event(Ctx* c) {
     if (c->cyc < c->evt) c->cyc = c->evt;
     psx_events(c);
@@ -294,7 +295,7 @@ static void hook_ptmodel_draw(Ctx* c, RecompFn orig) {
     if (ptmodel_capture(c)) return;   // objects: drawn natively (level3d.cpp)
     // the menus' item icons (a view of their own): the game draws them, keeping sub-pixel positions
     extern bool g_prec_on;
-    g_prec_on = c->r[6] != mem_r32(c, 0x800efde0) && !settings_is_classic();
+    g_prec_on = c->r[6] != mem_r32(c, GA(0x800efde0)) && !settings_is_classic();
     orig(c);
     g_prec_on = false;
 }
@@ -351,7 +352,7 @@ static void hook_frustum_corners(Ctx* c, RecompFn orig) {
         want_y = widen(g_vr_tan_y);
     }
     if (kx == 1.0f && ky == 1.0f && want_x == 0) return;
-    for (u32 a = 0x800f8b30; a < 0x800f8b30 + 32; a += 8) {
+    for (u32 a = GA(0x800f8b30); a < GA(0x800f8b30) + 32; a += 8) {
         float rx = kx, ry = ky;
         int z = (s16)mem_r16(c, a + 4), x0 = (s16)mem_r16(c, a), y0 = (s16)mem_r16(c, a + 2);
         if (want_x > 0 && z > 0) {
@@ -460,7 +461,7 @@ static void log_shot(Ctx* c, u32 obj, const char* tag) {
     u32 st = mem_r32(c, obj + 0xbc);
     if ((st >> 24) != 0x80) return;
     double e[3], f[3], p[3], d = 0, t = 0;
-    for (int i = 0; i < 3; i++) { e[i] = (g_aim_to_view && g_aim_origin_set) ? g_aim_origin[i] : (s32)mem_r32(c, 0x800f0110 + 0x20 + i * 4); f[i] = (s16)mem_r16(c, 0x800f0110 + 0x0c + i * 6 + 4) / 4096.0; p[i] = (s16)mem_r16(c, st + 0x38 + i * 2); t += (p[i] - e[i]) * f[i]; }
+    for (int i = 0; i < 3; i++) { e[i] = (g_aim_to_view && g_aim_origin_set) ? g_aim_origin[i] : (s32)mem_r32(c, GA(0x800f0110) + 0x20 + i * 4); f[i] = (s16)mem_r16(c, GA(0x800f0110) + 0x0c + i * 6 + 4) / 4096.0; p[i] = (s16)mem_r16(c, st + 0x38 + i * 2); t += (p[i] - e[i]) * f[i]; }
     for (int i = 0; i < 3; i++) { double q = p[i] - (e[i] + f[i] * t); d += q * q; }
     logf("shot %s frame %d: end %.0f,%.0f,%.0f  %.0f along the view, %.1f off the centre line\n", tag, g_frame, p[0], p[1], p[2], t, sqrt(d));
 }
@@ -472,11 +473,11 @@ static void fire_aimed(Ctx* c, RecompFn orig, double fwd);
 static void hook_fire(Ctx* c, RecompFn orig) { fire_aimed(c, orig, 0.0); }
 static void hook_fire_grenade(Ctx* c, RecompFn orig) { fire_aimed(c, orig, GRENADE_FWD); }
 static void fire_aimed(Ctx* c, RecompFn orig, double fwd) {
-    u32 obj = mem_r32(c, 0x800efdc8);
-    bool scope = (mem_r32(c, 0x800efdfc) & 0x400) || (s16)mem_r16(c, 0x800f0ca4) == 1;
+    u32 obj = mem_r32(c, GA(0x800efdc8));
+    bool scope = (mem_r32(c, GA(0x800efdfc)) & 0x400) || (s16)mem_r16(c, GA(0x800f0ca4)) == 1;
     u32 st = (obj >> 24) == 0x80 ? mem_r32(c, obj + 0xbc) : 0;
     if (!g_aim_to_view || scope || !g_aim_fix || (st >> 24) != 0x80) { orig(c); if (st) log_shot(c, obj, "(game)"); return; }
-    const u32 vo = 0x800f0110;
+    const u32 vo = GA(0x800f0110);
     u16 rot[9];
     u32 pos[3];
     for (int i = 0; i < 9; i++) rot[i] = (u16)mem_r16(c, obj + 0x14 + i * 2);
@@ -505,7 +506,7 @@ static void fire_aimed(Ctx* c, RecompFn orig, double fwd) {
     log_shot(c, obj, "(aimed)");
     for (int i = 0; i < 3; i++) mem_w32(c, vo + 0x20 + i * 4, eye_saved[i]);
     if (g_aim_ray_set) for (int i = 0; i < 9; i++) mem_w16(c, vo + 0x0c + i * 2, vrot[i]);
-    if (mem_r32(c, 0x800efdc8) == obj) {
+    if (mem_r32(c, GA(0x800efdc8)) == obj) {
         for (int i = 0; i < 9; i++) mem_w16(c, obj + 0x14 + i * 2, rot[i]);
         for (int i = 0; i < 3; i++) mem_w32(c, obj + 0x28 + i * 4, pos[i]);
     }
@@ -518,7 +519,7 @@ static void hook_shot_target(Ctx* c, RecompFn orig) {
     orig(c);
     u32 t = c->r[2];
     if (!g_aim_to_view || !g_aim_origin_set || (t >> 24) != 0x80) return;
-    const u32 vo = 0x800f0110;
+    const u32 vo = GA(0x800f0110);
     double along = 0, d2 = 0, p[3], f[3];
     for (int i = 0; i < 3; i++) {
         p[i] = (s16)mem_r16(c, t + 0x44 + i * 2) - (g_aim_ray_set ? g_aim_ray_org[i] : (double)g_aim_origin[i]);
@@ -540,24 +541,24 @@ static void hook_trace(Ctx* c, RecompFn orig) {
 }
 
 void game_init() {
-    hook_set(0x80073474, hook_fire);
-    hook_set(0x8006c05c, hook_shot_target);
-    hook_set(0x80073804, hook_fire_grenade);
+    hook_set(GA(0x80073474), hook_fire);
+    hook_set(GA(0x8006c05c), hook_shot_target);
+    hook_set(GA(0x80073804), hook_fire_grenade);
     if (g_trace_fn) hook_set(g_trace_fn, hook_trace);
-    hook_set(0x80015b50, hook_cam_stick);
-    hook_set(0x80065db8, hook_frustum_corners);
-    hook_set(0x800612b8, hook_relocate);
-    hook_set(0x8006737c, hook_level_draw);
-    hook_set(0x80086810, hook_meshfx_draw);
-    hook_set(0x800b8cb4, hook_ptmodel_draw);
-    hook_set(0x8005da74, hook_sky_draw);
-    hook_set(0x8002dc88, hook_shadow_draw);
-    hook_set(0x8007e8c8, hook_decals_draw);
-    hook_set(0x800a1128, hook_vsync_wait);
+    hook_set(GA(0x80015b50), hook_cam_stick);
+    hook_set(GA(0x80065db8), hook_frustum_corners);
+    hook_set(GA(0x800612b8), hook_relocate);
+    hook_set(GA(0x8006737c), hook_level_draw);
+    hook_set(GA(0x80086810), hook_meshfx_draw);
+    hook_set(GA(0x800b8cb4), hook_ptmodel_draw);
+    hook_set(GA(0x8005da74), hook_sky_draw);
+    hook_set(GA(0x8002dc88), hook_shadow_draw);
+    hook_set(GA(0x8007e8c8), hook_decals_draw);
+    hook_set(GA(0x800a1128), hook_vsync_wait);
     g_main_fibre.live = true;
     g_cs = g_main_fibre.cs;
-    hook_set(0x80035970, hook_fibre_start);
-    hook_set(0x80035a0c, hook_fibre_resume);
-    hook_set(0x80035b64, hook_fibre_yield);
-    hook_set(0x80035ae0, hook_fibre_exitcall);
+    hook_set(GA(0x80035970), hook_fibre_start);
+    hook_set(GA(0x80035a0c), hook_fibre_resume);
+    hook_set(GA(0x80035b64), hook_fibre_yield);
+    hook_set(GA(0x80035ae0), hook_fibre_exitcall);
 }

@@ -1,6 +1,7 @@
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
 #include <windows.h>
+#include "region.h"
 #include <d3d11.h>
 #include "ui.h"
 #include "savestate.h"
@@ -75,7 +76,13 @@ void settings_save(const char* path) {
     FILE* f = fopen(path, "w");
     if (!f) { ui_notify("could not write c12.ini"); return; }
     fprintf(f, "# C-12: Final Resistance - recompiled. F1 or Esc in game opens the settings menu.\n");
-    fprintf(f, "cue=%s\n\n# --- video ---\n", c.cue.c_str());
+#ifdef C12_USA
+    fprintf(f, "cue=%s\ncue_usa=%s\n\n# --- video ---\n", c.cue_other.c_str(), c.cue.c_str());
+#else
+    fprintf(f, "cue=%s\n", c.cue.c_str());
+    if (!c.cue_other.empty()) fprintf(f, "cue_usa=%s\n", c.cue_other.c_str());
+    fprintf(f, "\n# --- video ---\n");
+#endif
     fprintf(f, "scale=%d            # internal resolution multiplier\n", c.scale);
     fprintf(f, "widescreen=%d       # 16:9 field of view\n", c.widescreen);
     fprintf(f, "hud_fix=%d          # keep HUD/menus in proportion in widescreen\n", g_hud_fix);
