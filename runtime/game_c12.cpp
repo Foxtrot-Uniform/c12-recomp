@@ -331,15 +331,34 @@ int g_ws_frustum = 1;
 // option frustum_margin: wider than the picture - cells are tested by their corners, and the test runs
 // in the game logic with the camera of the frame before (a turning view reveals the side it turns to)
 float g_frustum_margin = 1.3f;
+float g_vr_frustum = 10.0f;   // option vr_frustum: degrees added to the eyes' widest angle (-1 = no VR widening)
 static void hook_frustum_corners(Ctx* c, RecompFn orig) {
     orig(c);
     extern float g_fov_mult;
     float kx = g_fov_mult, ky = g_fov_mult;   // a wider field of view (mods) widens the rays both ways
     if (g_ws_frustum && g_ws_scale != 1.0f) kx *= 1.0f / g_ws_scale;
     kx *= g_frustum_margin;   // a little margin: cells are tested by their corners
-    if (kx == 1.0f && ky == 1.0f) return;
+    // VR: the eyes see much more than the game's picture (a headset's lens: 50-60 degrees to each side), and
+    // the head turns further before the next game frame: the rays are spread to the widest eye angle plus
+    // vr_frustum degrees (10) - the parts left out were black holes at the edges of the view
+    extern void (*g_vr_pacer)(double until);
+    extern float g_vr_tan_x, g_vr_tan_y;
+    float want_x = 0, want_y = 0;
+    extern float g_vr_frustum;
+    if (g_vr_pacer && g_vr_tan_x > 0.1f && g_vr_frustum >= 0.0f) {
+        auto widen = [](float t) { float a = atanf(t) + g_vr_frustum * 0.01745f; return a > 1.4f ? 5.8f : tanf(a); };
+        want_x = widen(g_vr_tan_x);
+        want_y = widen(g_vr_tan_y);
+    }
+    if (kx == 1.0f && ky == 1.0f && want_x == 0) return;
     for (u32 a = 0x800f8b30; a < 0x800f8b30 + 32; a += 8) {
-        int x = (int)((s16)mem_r16(c, a) * kx), y = (int)((s16)mem_r16(c, a + 2) * ky);
+        float rx = kx, ry = ky;
+        int z = (s16)mem_r16(c, a + 4), x0 = (s16)mem_r16(c, a), y0 = (s16)mem_r16(c, a + 2);
+        if (want_x > 0 && z > 0) {
+            if (x0 && fabsf(x0 * rx) < want_x * z) rx = want_x * z / fabsf((float)x0);
+            if (y0 && fabsf(y0 * ry) < want_y * z) ry = want_y * z / fabsf((float)y0);
+        }
+        int x = (int)(x0 * rx), y = (int)(y0 * ry);
         x = x > 32767 ? 32767 : x < -32768 ? -32768 : x;
         y = y > 32767 ? 32767 : y < -32768 ? -32768 : y;
         mem_w16(c, a, (u32)(u16)(s16)x);

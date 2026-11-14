@@ -28,6 +28,7 @@ struct ID3D11Device;
 ID3D11Device* hw_device();   // gpu_d3d11.cpp (null without the D3D11 renderer)
 
 void (*g_vr_pacer)(double until);
+float g_vr_tan_x, g_vr_tan_y;   // the widest angle the eyes see (tangent), for visibility (game_c12.cpp)
 static C12VrPose g_head;
 static bool g_head_ok;
 
@@ -189,6 +190,10 @@ static int api_vr_render(const C12VrView* views, float upm, int w, int h, C12VrI
     if (!hw_device() || !views || w <= 0 || h <= 0) return 0;
     g_vr_active = true;
     g_last_upm = upm;
+    for (int e = 0; e < 2; e++) {
+        g_vr_tan_x = std::max(g_vr_tan_x, std::max(fabsf(views[e].tan_left), fabsf(views[e].tan_right)));
+        g_vr_tan_y = std::max(g_vr_tan_y, std::max(fabsf(views[e].tan_up), fabsf(views[e].tan_down)));
+    }
     // the window's picture (menus, loading screens, films)
     GpuDisplay d = gpu_display();
     int cw = 1280, ch = g_cfg.widescreen ? 720 : 960;

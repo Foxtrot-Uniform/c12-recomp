@@ -27,7 +27,7 @@ namespace
     int g_enabled = 0;
     float g_units_per_m = 183.0f;   // the hero (about 330 units) as a 1.8 m person
     float g_render_scale = 1.0f;
-    float g_hud_dist = 1.4f, g_hud_width = 1.1f;
+    float g_hud_dist = 1.4f, g_hud_width = 1.5f;
     float g_cinema_dist = 2.5f, g_cinema_width = 2.6f;
     int g_snap_turn = 1;             // right stick: 30 degree snaps (else smooth)
     float g_snap_deg = 30.0f, g_smooth_speed = 120.0f;   // degrees, degrees per second
@@ -85,8 +85,10 @@ namespace
         for (int i = 0; i < 2; i++)
         {
             if (!h[i].active) { g_api->vr_set_hand(i, nullptr); continue; }
+            // held where the hand grips, pointing where the controller aims (the grip pose's axes follow the
+            // tilted handle: a gun held by them pointed up while the shots and the laser went straight ahead)
             C12VrPose p;
-            memcpy(p.q, h[i].grip.q, sizeof p.q);
+            memcpy(p.q, h[i].aim.q, sizeof p.q);
             memcpy(p.p, h[i].grip.p, sizeof p.p);
             g_api->vr_set_hand(i, &p);
         }
@@ -110,6 +112,10 @@ namespace
     ID3D11VertexShader *g_vs;
     ID3D11PixelShader *g_ps_hud;
     ID3D11Buffer *g_cb;
+    ID3D11VertexShader *g_vs_panel;
+    ID3D11PixelShader *g_ps_panel;
+    ID3D11Buffer *g_cb_panel;
+    ID3D11BlendState *g_blend_pm;
     ID3D11SamplerState *g_smp;
 
     void gameLog(const char *line)
@@ -131,6 +137,24 @@ V vs(uint id : SV_VertexID) {
     o.uv = p;
     o.pos = float4(p * float2(2, -2) + float2(-1, 1), 0, 1);
     return o;
+}
+// a flat panel (HUD, menu screen) drawn into an eye's picture: corners already projected (clip space)
+cbuffer pc : register(b1) { float4 cpos[4]; float4 cuv[4]; float4 cmode; };
+V vs_panel(uint id : SV_VertexID) {
+    V o;
+    o.pos = cpos[id];
+    o.uv = cuv[id].xy;
+    return o;
+}
+float4 ps_panel(V i) : SV_Target {
+    float3 b = tb.SampleLevel(smp, i.uv, 0).rgb;
+    float a = 1.0;
+    if (cmode.y > 0.5) {   // HUD: over black and over white -> premultiplied colour + coverage
+        float3 w = tw.SampleLevel(smp, i.uv, 0).rgb;
+        a = saturate(1.0 - dot(w - b, float3(1, 1, 1)) / 3.0);
+    }
+    if (cmode.x > 0.5) b = pow(max(b, 0), 2.2);
+    return float4(b, a);
 }
 float4 ps_hud(V i) : SV_Target {
     float3 b = tb.SampleLevel(smp, i.uv, 0).rgb;
@@ -155,6 +179,31 @@ float4 ps_hud(V i) : SV_Target {
             return false;
         g_dev->CreatePixelShader(b->GetBufferPointer(), b->GetBufferSize(), nullptr, &g_ps_hud);
         b->Release();
+        if (FAILED(D3DCompile(kShader, strlen(kShader), "vr", nullptr, nullptr, "vs_panel", "vs_5_0", 0, 0, &b, &e)))
+            return false;
+        g_dev->CreateVertexShader(b->GetBufferPointer(), b->GetBufferSize(), nullptr, &g_vs_panel);
+        b->Release();
+        if (FAILED(D3DCompile(kShader, strlen(kShader), "vr", nullptr, nullptr, "ps_panel", "ps_5_0", 0, 0, &b, &e)))
+            return false;
+        g_dev->CreatePixelShader(b->GetBufferPointer(), b->GetBufferSize(), nullptr, &g_ps_panel);
+        b->Release();
+        {
+            D3D11_BUFFER_DESC pd = {};
+            pd.ByteWidth = sizeof(float) * 36;
+            pd.Usage = D3D11_USAGE_DEFAULT;
+            pd.BindFlags = D3D11_BIND_CONSTANT_BUFFER;
+            g_dev->CreateBuffer(&pd, nullptr, &g_cb_panel);
+            D3D11_BLEND_DESC bl = {};
+            bl.RenderTarget[0].BlendEnable = TRUE;
+            bl.RenderTarget[0].SrcBlend = D3D11_BLEND_ONE;
+            bl.RenderTarget[0].DestBlend = D3D11_BLEND_INV_SRC_ALPHA;
+            bl.RenderTarget[0].BlendOp = D3D11_BLEND_OP_ADD;
+            bl.RenderTarget[0].SrcBlendAlpha = D3D11_BLEND_ONE;
+            bl.RenderTarget[0].DestBlendAlpha = D3D11_BLEND_INV_SRC_ALPHA;
+            bl.RenderTarget[0].BlendOpAlpha = D3D11_BLEND_OP_ADD;
+            bl.RenderTarget[0].RenderTargetWriteMask = D3D11_COLOR_WRITE_ENABLE_ALL;
+            g_dev->CreateBlendState(&bl, &g_blend_pm);
+        }
         D3D11_BUFFER_DESC bd = {};
         bd.ByteWidth = 16;
         bd.Usage = D3D11_USAGE_DEFAULT;
@@ -164,7 +213,97 @@ float4 ps_hud(V i) : SV_Target {
         sd.Filter = D3D11_FILTER_MIN_MAG_MIP_LINEAR;
         sd.AddressU = sd.AddressV = sd.AddressW = D3D11_TEXTURE_ADDRESS_CLAMP;
         g_dev->CreateSamplerState(&sd, &g_smp);
-        return g_vs && g_ps_hud && g_cb && g_smp;
+        return g_vs && g_ps_hud && g_cb && g_smp && g_vs_panel && g_ps_panel && g_cb_panel && g_blend_pm;
+    }
+
+    void qrot(const float q[4], const float v[3], float o[3])
+    {
+        float t[3] = {2 * (q[1] * v[2] - q[2] * v[1]), 2 * (q[2] * v[0] - q[0] * v[2]), 2 * (q[0] * v[1] - q[1] * v[0])};
+        o[0] = v[0] + q[3] * t[0] + (q[1] * t[2] - q[2] * t[1]);
+        o[1] = v[1] + q[3] * t[1] + (q[2] * t[0] - q[0] * t[2]);
+        o[2] = v[2] + q[3] * t[2] + (q[0] * t[1] - q[1] * t[0]);
+    }
+
+    // Draw a flat panel (width x height metres at `pose`, tracking space) into an eye's picture `dst`.
+    // The HUD and the menu screen used to be quad layers for the runtime to place; on a PSVR2 with
+    // SteamVR none of them showed. tex1 set: the HUD (over black / over white) blended over the scene;
+    // else an opaque picture. Returns false when the panel is behind the eye.
+    bool drawPanel(ID3D11Texture2D *dst, bool srgb, int w, int h, const vr::View &eye, const vr::Pose &pose,
+                   float width, float height, void *tex0, void *tex1)
+    {
+        if (!dst || !tex0 || !makeShaders())
+            return false;
+        float iq[4] = {-eye.pose.q[0], -eye.pose.q[1], -eye.pose.q[2], eye.pose.q[3]};
+        float tl = tanf(eye.fov.left), tr = tanf(eye.fov.right), tu = tanf(eye.fov.up), td = tanf(eye.fov.down);
+        float cb[36] = {};
+        static const float cx[4] = {-0.5f, 0.5f, -0.5f, 0.5f}, cy[4] = {0.5f, 0.5f, -0.5f, -0.5f};
+        for (int k = 0; k < 4; k++)
+        {
+            float loc[3] = {cx[k] * width, cy[k] * height, 0.0f}, wv[3], d[3], e[3];
+            qrot(pose.q, loc, wv);
+            for (int i = 0; i < 3; i++) d[i] = pose.p[i] + wv[i] - eye.pose.p[i];
+            qrot(iq, d, e);   // eye space: x right, y up, -z ahead
+            float z = -e[2];
+            if (z < 0.02f)
+                return false;
+            // clip space with w = depth: x/w = (x/z - centre) / half width of the lens' tangents
+            cb[k * 4 + 0] = (2.0f * e[0] - (tr + tl) * z) / (tr - tl);
+            cb[k * 4 + 1] = (2.0f * e[1] - (tu + td) * z) / (tu - td);
+            cb[k * 4 + 2] = 0.5f * z;
+            cb[k * 4 + 3] = z;
+            cb[16 + k * 4 + 0] = cx[k] + 0.5f;
+            cb[16 + k * 4 + 1] = 0.5f - cy[k];
+        }
+        cb[32] = srgb ? 1.0f : 0.0f;
+        cb[33] = tex1 ? 1.0f : 0.0f;
+        ID3D11RenderTargetView *rtv = nullptr;
+        if (FAILED(g_dev->CreateRenderTargetView(dst, nullptr, &rtv)))
+            return false;
+        ID3D11ShaderResourceView *srv[2] = {};
+        g_dev->CreateShaderResourceView((ID3D11Texture2D *)tex0, nullptr, &srv[0]);
+        if (tex1)
+            g_dev->CreateShaderResourceView((ID3D11Texture2D *)tex1, nullptr, &srv[1]);
+        g_ctx->UpdateSubresource(g_cb_panel, 0, nullptr, cb, 0, 0);
+        g_ctx->OMSetRenderTargets(1, &rtv, nullptr);
+        D3D11_VIEWPORT vp = {0, 0, (float)w, (float)h, 0, 1};
+        g_ctx->RSSetViewports(1, &vp);
+        g_ctx->RSSetState(nullptr);
+        g_ctx->OMSetBlendState(tex1 ? g_blend_pm : nullptr, nullptr, ~0u);
+        g_ctx->OMSetDepthStencilState(nullptr, 0);
+        g_ctx->IASetInputLayout(nullptr);
+        g_ctx->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLESTRIP);
+        g_ctx->VSSetShader(g_vs_panel, nullptr, 0);
+        g_ctx->VSSetConstantBuffers(1, 1, &g_cb_panel);
+        g_ctx->PSSetShader(g_ps_panel, nullptr, 0);
+        g_ctx->PSSetConstantBuffers(1, 1, &g_cb_panel);
+        g_ctx->PSSetShaderResources(0, 2, srv);
+        g_ctx->PSSetSamplers(0, 1, &g_smp);
+        g_ctx->Draw(4, 0);
+        ID3D11ShaderResourceView *nul[2] = {};
+        g_ctx->PSSetShaderResources(0, 2, nul);
+        ID3D11RenderTargetView *nrt = nullptr;
+        g_ctx->OMSetRenderTargets(1, &nrt, nullptr);
+        g_ctx->OMSetBlendState(nullptr, nullptr, ~0u);
+        rtv->Release();
+        if (srv[0]) srv[0]->Release();
+        if (srv[1]) srv[1]->Release();
+        return true;
+    }
+
+    // an eye's picture cleared to black (the menu screen floats in the dark)
+    ID3D11Texture2D *blackEye(vr::Panel panel, int w, int h, bool &srgb)
+    {
+        ID3D11Texture2D *dst = vr::panelImage(panel, (uint32_t)w, (uint32_t)h, srgb);
+        if (!dst)
+            return nullptr;
+        ID3D11RenderTargetView *rtv = nullptr;
+        if (SUCCEEDED(g_dev->CreateRenderTargetView(dst, nullptr, &rtv)))
+        {
+            const float black[4] = {0, 0, 0, 1};
+            g_ctx->ClearRenderTargetView(rtv, black);
+            rtv->Release();
+        }
+        return dst;
     }
 
     void copyInto(vr::Panel panel, void *src, int w, int h)
@@ -322,10 +461,6 @@ float4 ps_hud(V i) : SV_Target {
                 proj.views[1] = views[1];
                 if (img.hud_black && img.hud_white)
                 {
-                    hudInto(img.hud_black, img.hud_white, img.hud_w, img.hud_h);
-                    vr::QuadLayer &q = quads[nq++];
-                    q.on = true;
-                    q.panel = vr::Panel::Hud;
                     vr::Pose hb = head;
                     if (g_hud_lazy)
                     {
@@ -341,22 +476,38 @@ float4 ps_hud(V i) : SV_Target {
                         if (fabsf(d) > 0.44f) g_hud_yaw += (d - (d > 0 ? 0.44f : -0.44f)) * 0.15f + d * 0.02f;
                         hb.q[0] = 0.0f; hb.q[1] = sinf(g_hud_yaw * 0.5f); hb.q[2] = 0.0f; hb.q[3] = cosf(g_hud_yaw * 0.5f);
                     }
-                    q.pose = ahead(hb, g_hud_dist, g_hud_lazy ? 0.25f : 0.0f);
-                    q.width = g_hud_width;
-                    q.height = g_hud_width * 0.75f;   // the game's 4:3 picture
-                    q.alpha = true;
+                    vr::Pose hp = ahead(hb, g_hud_dist, g_hud_lazy ? 0.25f : 0.0f);
+                    // the shape of the game's picture: 16:9 in widescreen (the menu screen's picture has it)
+                    float aspect = img.cinema_w > 0 && img.cinema_h > 0 ? (float)img.cinema_h / (float)img.cinema_w : 0.75f;
+                    for (int e = 0; e < 2; e++)
+                    {
+                        bool srgb = false;
+                        ID3D11Texture2D *dst = vr::panelImage(e ? vr::Panel::SceneRight : vr::Panel::Scene, (uint32_t)img.eye_w, (uint32_t)img.eye_h, srgb);
+                        drawPanel(dst, srgb, img.eye_w, img.eye_h, views[e], hp, g_hud_width, g_hud_width * aspect, img.hud_black, img.hud_white);
+                    }
                 }
             }
             else if (img.cinema)
             {
-                copyInto(vr::Panel::Cinema, img.cinema, img.cinema_w, img.cinema_h);
-                vr::QuadLayer &q = quads[nq++];
-                q.on = true;
-                q.panel = vr::Panel::Cinema;
+                // menus, loading screens, films: a screen ahead in the dark, drawn into the eyes' pictures
                 vr::Pose origin;
-                q.pose = ahead(origin, g_cinema_dist, 0.0f);
-                q.width = g_cinema_width;
-                q.height = g_cinema_width * img.cinema_h / (float)img.cinema_w;
+                vr::Pose cp = ahead(origin, g_cinema_dist, 0.0f);
+                float ch = g_cinema_width * img.cinema_h / (float)img.cinema_w;
+                bool ok = true;
+                for (int e = 0; e < 2; e++)
+                {
+                    bool srgb = false;
+                    ID3D11Texture2D *dst = blackEye(e ? vr::Panel::SceneRight : vr::Panel::Scene, w, h, srgb);
+                    if (!dst) { ok = false; continue; }
+                    drawPanel(dst, srgb, w, h, views[e], cp, g_cinema_width, ch, img.cinema, nullptr);
+                }
+                if (ok)
+                {
+                    proj.on = true;
+                    proj.stereo = true;
+                    proj.views[0] = views[0];
+                    proj.views[1] = views[1];
+                }
             }
         }
         vr::endFrame(proj, quads, nq);
