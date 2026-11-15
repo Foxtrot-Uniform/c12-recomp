@@ -22,7 +22,7 @@
 #pragma once
 #include <stdint.h>
 
-#define C12_MOD_API_VERSION 7   /* check api->version >= the version your mod was written for */
+#define C12_MOD_API_VERSION 6   /* check api->version >= the version your mod was written for */
 
 #ifdef __cplusplus
 extern "C" {
@@ -129,13 +129,6 @@ typedef struct C12ModApi {
     /* When the pictures of the next vr_render will be shown (time_now() clock: the headset's predicted
      * display time). The scene is blended to that moment, on a steady timeline. 0 = the time of the call. */
     void (*vr_set_display_time)(double t);
-    /* ---- version 7: other releases ---- */
-    /* hook() and call() take the European release's (PAL, SCES-03364) addresses in every build. Data a mod
-     * reads or writes by address must go through addr(): it turns a PAL address into the running release's
-     * (the same in a PAL build; RAM offsets without 0x80000000 work too). region: "PAL" or "USA" (NTSC,
-     * 30 game frames a second, a 240-line screen). */
-    uint32_t (*addr)(uint32_t pal_address);
-    const char* region;
 } C12ModApi;
 
 #ifdef __cplusplus

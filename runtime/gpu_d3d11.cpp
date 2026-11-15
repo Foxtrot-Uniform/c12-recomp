@@ -479,13 +479,8 @@ static void hw_line(const GpuVtx& a, const GpuVtx& b, const GpuState& s) {
 // which then clips at znear / zfar with SV_ClipDistance (the rasterizer interpolates perspective-correctly).
 static N3View n3v;
 static bool n3_on;
-struct N3Queued { N3Vtx v[3]; N3Mat m; float z; const void* tex = nullptr; };
+struct N3Queued { N3Vtx v[3]; N3Mat m; float z; };
 static std::vector<N3Queued> n3_semi;
-// Opaque triangles are kept until n3_end and drawn grouped by texture: with HD textures nearly every
-// triangle of a level uses another replacement image, and drawing them in the game's order made one draw
-// call per triangle (in a headset: two eyes at 90-120 Hz - the frame rate halved). Depth sorts them.
-static std::vector<N3Queued> n3_opaque;
-static const HdSub* n3_hd(const N3Vtx* v, const GpuState& s, float lim[4]);
 
 bool n3_available() { return dev != nullptr && vram_tex != nullptr; }
 
@@ -503,8 +498,9 @@ static GpuState n3_state(const N3Mat& m) {
 }
 
 // kind: blend kind (BK_*), dm: depth mode (DM_*)
-static const HdSub* n3_hd(const N3Vtx* v, const GpuState& s, float lim[4]) {
-    lim[0] = 0; lim[1] = 0; lim[2] = 255; lim[3] = 255;
+static void n3_emit(const N3Vtx* v, const N3Mat& m, int kind, int dm) {
+    GpuState s = n3_state(m);
+    float lim[4] = {0, 0, 255, 255};
     if (s.textured) {   // same texel limits as hw_tri (whole-texel UV rectangle of the polygon)
         float fu0 = std::min({v[0].u, v[1].u, v[2].u}), fu1 = std::max({v[0].u, v[1].u, v[2].u});
         float fv0 = std::min({v[0].v, v[1].v, v[2].v}), fv1 = std::max({v[0].v, v[1].v, v[2].v});
@@ -517,13 +513,6 @@ static const HdSub* n3_hd(const N3Vtx* v, const GpuState& s, float lim[4]) {
     }
     const HdSub* hd = s.textured ? hdtex_lookup(s, (int)lim[0], (int)lim[1], (int)lim[2], (int)lim[3]) : nullptr;
     if (hd) { lim[0] = (float)hd->u0; lim[1] = (float)hd->v0; lim[2] = 1.0f / hd->w; lim[3] = 1.0f / hd->h; }
-    return hd;
-}
-
-static void n3_emit(const N3Vtx* v, const N3Mat& m, int kind, int dm) {
-    GpuState s = n3_state(m);
-    float lim[4];
-    const HdSub* hd = n3_hd(v, s, lim);
     // the whole drawing area may change (the exact projected extent is unknown for near-clipped triangles)
     begin_prim(s, kind | dm << 3, 3, n3v.clip_x1, n3v.clip_y1, n3v.clip_x2 + 1, n3v.clip_y2 + 1, hd ? hd->srv : nullptr);
     float cx = (n3v.off_x + n3v.ofx) / 512.0f - 1.0f, cy = 1.0f - (n3v.off_y + n3v.ofy) / 256.0f;
@@ -565,14 +554,7 @@ void n3_begin(const N3View& v) {
     if (depth_view(t)) ctx->ClearDepthStencilView(depth_view(t), D3D11_CLEAR_DEPTH, 0.0f, 0);
     depth_frame[t] = g_frame;
     n3_semi.clear();
-    n3_opaque.clear();
     n3_on = true;
-}
-static const void* n3_tex_key(const N3Vtx* v, const N3Mat& m) {
-    GpuState s = n3_state(m);
-    float lim[4];
-    const HdSub* hd = n3_hd(v, s, lim);
-    return hd ? (const void*)hd->srv : nullptr;
 }
 
 void n3_tri(const N3Vtx v[3], const N3Mat& m) {
@@ -586,27 +568,16 @@ void n3_tri(const N3Vtx v[3], const N3Mat& m) {
         n3_semi.push_back(q);
         return;
     }
-    N3Queued q;
-    memcpy(q.v, v, sizeof q.v);
-    q.m = m;
-    q.z = 0;
-    q.tex = n3_tex_key(v, m);
-    n3_opaque.push_back(q);
+    n3_emit(v, m, BK_OPAQUE, DM_WRITE);
 }
 
 void n3_end() {
     if (!n3_on) return;
-    std::stable_sort(n3_opaque.begin(), n3_opaque.end(), [](const N3Queued& a, const N3Queued& b) { return a.tex < b.tex; });
-    for (auto& q : n3_opaque) n3_emit(q.v, q.m, BK_OPAQUE, DM_WRITE);
-    n3_opaque.clear();
     if (!n3_semi.empty()) {
         // 1) the opaque texels of semi-transparent textured triangles (no STP bit) are solid: draw and
-        //    depth-write them first, in any order (grouped by texture)
-        std::vector<N3Queued*> cut;
+        //    depth-write them first, in any order
         for (auto& q : n3_semi)
-            if (q.m.textured) { q.tex = n3_tex_key(q.v, q.m); cut.push_back(&q); }
-        std::stable_sort(cut.begin(), cut.end(), [](const N3Queued* a, const N3Queued* b) { return a->tex < b->tex; });
-        for (auto* q : cut) n3_emit(q->v, q->m, BK_CUT, DM_WRITE);
+            if (q.m.textured) n3_emit(q.v, q.m, BK_CUT, DM_WRITE);
         // 2) everything semi-transparent, back to front by centroid depth, tested but not written
         std::stable_sort(n3_semi.begin(), n3_semi.end(), [](const N3Queued& a, const N3Queued& b) { return a.z > b.z; });
         for (auto& q : n3_semi) {

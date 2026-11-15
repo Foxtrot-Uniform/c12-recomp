@@ -13,8 +13,7 @@ extern int g_log_level;  // 0 quiet, 1 info, 2 verbose
 
 // ---- config ----------------------------------------------------------
 struct Config {
-    std::string cue;            // path to disc .cue (this build's release)
-    std::string cue_other;      // the other release's (c12.ini keeps both: cue= PAL, cue_usa= USA)
+    std::string cue;            // path to disc .cue
     std::string moddir = "mods";
     std::string memcard = "memcard1.mcd";
     std::string hd_textures;    // DuckStation-style replacement pack directory

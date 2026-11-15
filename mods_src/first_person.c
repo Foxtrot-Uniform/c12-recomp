@@ -79,14 +79,12 @@ static int vm_ok;                  /* view basis below is valid for this frame *
 static float vm_eye[3], vm_r[3], vm_d[3], vm_f[3];
 
 static int16_t r16(uint32_t a) { int16_t v; memcpy(&v, api->ram + (a & 0x1FFFFF), 2); return v; }
-/* data addresses are the European release's; A() turns one into the running release's (API 7) */
-static uint32_t A(uint32_t pal) { return api->version >= 7 && api->addr ? api->addr(pal) : pal; }
 static int32_t r32(uint32_t a) { int32_t v; memcpy(&v, api->ram + (a & 0x1FFFFF), 4); return v; }
 static void w16(uint32_t a, int v) { int16_t s = (int16_t)v; memcpy(api->ram + (a & 0x1FFFFF), &s, 2); }
 static void w32(uint32_t a, int32_t v) { memcpy(api->ram + (a & 0x1FFFFF), &v, 4); }
-static int scope_open(void) { return (r32(A(0x800efdfc)) & 0x400) || r16(A(0x800f0ca4)) == 1; }
+static int scope_open(void) { return (r32(0x800efdfc) & 0x400) || r16(0x800f0ca4) == 1; }
 /* manning a gun turret: the game looks through the turret with its own vision overlay (800f0ca4 = 2 then) */
-static int turret_mode(void) { return (r32(A(0x800efdfc)) & 0x200) != 0; }
+static int turret_mode(void) { return (r32(0x800efdfc) & 0x200) != 0; }
 static int is_ptr(uint32_t p) { return p >= 0x80010000u && p < 0x80200000u && (p & 3) == 0; }
 
 /* an object's model instance, or 0 */
@@ -184,7 +182,7 @@ static int wall_c = -1;   /* the game's camera reference for the controls while 
 static void apply(void) {
     uint32_t cam = g_cam;
     if (!is_ptr(cam)) return;
-    uint32_t hero = (uint32_t)r32(A(0x800efdb8));
+    uint32_t hero = (uint32_t)r32(0x800efdb8);
     uint32_t vo = (uint32_t)r32(cam + 0x40);
     int scope = scope_open();
     /* The view object records the camera that drives it (+4). In cutscenes another camera does:
@@ -197,8 +195,8 @@ static void apply(void) {
      * also the save point's memory card menu, set 800f1338 = 1 (outside the scope view). */
     if (!cutscene && is_ptr(hero)) {
         uint32_t st = (uint32_t)r32(hero + 0xbc);
-        if ((r32(A(0x800efdfc)) & 0x80) || (is_ptr(st) && (r16(st + 0x108) & 0x40))) cutscene = 1;
-        if (!scope && r32(A(0x800f1338)) == 1) cutscene = 1;
+        if ((r32(0x800efdfc) & 0x80) || (is_ptr(st) && (r16(st + 0x108) & 0x40))) cutscene = 1;
+        if (!scope && r32(0x800f1338) == 1) cutscene = 1;
         if (turret_mode()) cutscene = 1;
     }
     if (enabled && scope && !cutscene) {
@@ -213,12 +211,12 @@ static void apply(void) {
         if (scope_frames < 3 && scope_entry_a >= 0) {
             /* and up/down: the scope's pitch (800f0ca6, + = up, +-780) */
             int p = scope_entry_p > 780 ? 780 : scope_entry_p < -780 ? -780 : scope_entry_p;
-            w16(A(0x800f0ca8), scope_entry_a);
-            w16(A(0x800f0ca6), p);
+            w16(0x800f0ca8, scope_entry_a);
+            w16(0x800f0ca6, p);
             scope_frames++;
         }
-        scope_last_a = r16(A(0x800f0ca8)) & 0xfff;
-        scope_last_p = r16(A(0x800f0ca6));
+        scope_last_a = r16(0x800f0ca8) & 0xfff;
+        scope_last_p = r16(0x800f0ca6);
         if (scope_walk > 0.0f) {
             /* walking while aiming: the movement keys no longer turn the aim (the mouse does), and the
              * hero is moved slowly along the scope's own view, relative to where it looks */
@@ -397,7 +395,7 @@ static int vr_head(float* yaw_u, float* pitch_u, float basis[4]) {
  * target direction; that easing is what made mouse look feel slow. */
 static void camera_hook(uint32_t* r, C12OrigFn orig) {
     uint32_t cam = r[4];
-    uint32_t hero = (uint32_t)r32(A(0x800efdb8)), vo = (uint32_t)r32(cam + 0x40);
+    uint32_t hero = (uint32_t)r32(0x800efdb8), vo = (uint32_t)r32(cam + 0x40);
     /* the game updates more than one camera per frame; only the one that follows the hero is ours */
     if (!is_ptr(hero) || !is_ptr(vo) || (uint32_t)r32(cam + 0x44) != hero + 0x14) { orig(r); return; }
     g_cam = cam;
@@ -486,7 +484,7 @@ static void render_hook(uint32_t* r, C12OrigFn orig) {
         /* The game turns the player's input into a direction from where its camera stands relative to
          * the hero. Its own camera lags behind turns and is pushed aside by walls, so it is put
          * straight behind the hero along the view instead, at the game camera's own distance. */
-        uint32_t hero = (uint32_t)r32(A(0x800efdb8));
+        uint32_t hero = (uint32_t)r32(0x800efdb8);
         if (is_ptr(hero) && vm_ok) {
             float hx = (float)r32(hero + 0x28), hz = (float)r32(hero + 0x30);
             float dx = hx - (float)saved_eye[0], dz = hz - (float)saved_eye[2];
@@ -505,7 +503,7 @@ static void render_hook(uint32_t* r, C12OrigFn orig) {
 }
 
 static void weapon_hook(uint32_t* r, C12OrigFn orig) {
-    uint32_t hero = (uint32_t)r32(A(0x800efdb8)), cur = (uint32_t)r32(A(0x800efdc8));
+    uint32_t hero = (uint32_t)r32(0x800efdb8), cur = (uint32_t)r32(0x800efdc8);
     orig(r);
     C12VrPose vh;
     float hp[3], hr[9];
@@ -523,15 +521,15 @@ static void scope_open_hook(uint32_t* r, C12OrigFn orig) {
     orig(r);
     if (enabled && mode == 1 && was_on && last_view_a >= 0) {
         int p = last_view_p > 780 ? 780 : last_view_p < -780 ? -780 : last_view_p;
-        w16(A(0x800f0ca8), last_view_a);
-        w16(A(0x800f0ca6), p);
+        w16(0x800f0ca8, last_view_a);
+        w16(0x800f0ca6, p);
     }
 }
 
 /* 8005f380(desc, ...) queues a sound effect. Opening the scope view requests two: 800d24cc and
  * 800d24e8 (the switch-on blip and the hum that loops while the view is open). */
 static void sfx_hook(uint32_t* r, C12OrigFn orig) {
-    if (enabled && clean_scope && (r[4] == A(0x800d24ccu) || r[4] == A(0x800d24e8u))) { r[2] = 0; return; }
+    if (enabled && clean_scope && (r[4] == 0x800d24ccu || r[4] == 0x800d24e8u)) { r[2] = 0; return; }
     orig(r);
 }
 
@@ -548,8 +546,8 @@ static int on_foot(uint32_t hero) {
  * the hero, while CS-style movement is on and he is moving, target and facing are the wanted
  * direction right before it runs, so he runs exactly that way (with the game's own collision). */
 static void steer_hook(uint32_t* r, C12OrigFn orig) {
-    uint32_t hero = (uint32_t)r32(A(0x800efdb8));
-    if (was_on && is_ptr(hero) && (uint32_t)r32(A(0x800efdc8)) == hero && on_foot(hero)) {
+    uint32_t hero = (uint32_t)r32(0x800efdb8);
+    if (was_on && is_ptr(hero) && (uint32_t)r32(0x800efdc8) == hero && on_foot(hero)) {
         int a = (cs_move && cur_move_a >= 0) ? cur_move_a : cur_face_a;
         if (a >= 0) {
             uint32_t tg = (uint32_t)r32(hero + 0x9c);
@@ -567,7 +565,7 @@ static void steer_hook(uint32_t* r, C12OrigFn orig) {
  * using its own camera position - that lags and is pushed aside by walls) and gives the direction to
  * the physics step. For the hero both yaws are the wanted direction right before it runs. */
 static void move_prep_hook(uint32_t* r, C12OrigFn orig) {
-    uint32_t hero = (uint32_t)r32(A(0x800efdb8));
+    uint32_t hero = (uint32_t)r32(0x800efdb8);
     if (was_on && is_ptr(hero) && r[4] == hero) {
         uint32_t tg = (uint32_t)r32(hero + 0x9c);
         if (on_foot(hero)) {
@@ -584,7 +582,7 @@ static void move_prep_hook(uint32_t* r, C12OrigFn orig) {
  * facing; in the first-person view the game's camera is not where he heads, so Circle crouched instead
  * of climbing. While he moves on foot it is the direction the mod moves him in. */
 static void controls_hook(uint32_t* r, C12OrigFn orig) {
-    uint32_t ctl = r[4], hero = (uint32_t)r32(A(0x800efdb8));
+    uint32_t ctl = r[4], hero = (uint32_t)r32(0x800efdb8);
     orig(r);
     if (was_on && is_ptr(hero) && is_ptr(ctl) && ctl == (uint32_t)r32(hero + 0xb0) && on_foot(hero) && r32(ctl + 0x54) != 0) {
         int a = (cs_move && cur_move_a >= 0) ? cur_move_a : cur_face_a;
@@ -601,12 +599,12 @@ static void controls_hook(uint32_t* r, C12OrigFn orig) {
  * wanted direction itself, so that turn would never finish (on stretches where the game's camera does
  * not look along the view he stood still): the game's reading is set to the same direction. */
 static void run_hook(uint32_t* r, C12OrigFn orig) {
-    uint32_t hero = (uint32_t)r32(A(0x800efdb8));
+    uint32_t hero = (uint32_t)r32(0x800efdb8);
     if (was_on && is_ptr(hero) && r[4] == hero && on_foot(hero)) {
         int a = (cs_move && cur_move_a >= 0) ? cur_move_a : cur_face_a;
         if (a >= 0) {
             set_facing(hero, a);
-            w32(A(0x800eff04), (r32(A(0x800eff04)) & ~0xfffu) | a);
+            w32(0x800eff04, (r32(0x800eff04) & ~0xfffu) | a);
         }
     }
     orig(r);
@@ -616,7 +614,7 @@ static void run_hook(uint32_t* r, C12OrigFn orig) {
  * x 4096, in the scratchpad) at speed, with the game's own collision. In the scope view it is called
  * for the hero with speed 0; while walking there the mod passes its direction and a slow speed. */
 static void physics_hook(uint32_t* r, C12OrigFn orig) {
-    uint32_t hero = (uint32_t)r32(A(0x800efdb8));
+    uint32_t hero = (uint32_t)r32(0x800efdb8);
     if (enabled && in_scope && scope_move && scope_walk > 0.0f && r[4] == hero && r[6] == 0) {
         api->write32(r[5] + 0, (uint32_t)(int32_t)(scope_dx * 4096.0f));
         api->write32(r[5] + 4, 0);

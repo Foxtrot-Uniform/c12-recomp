@@ -19,16 +19,6 @@ your machine from your own disc image.
     copy c12.ini.example c12.ini                           # then set cue= to your .cue
     powershell -File build.ps1                             # recompile + build (VS 2022 Build Tools, CMake, Ninja)
 
-**US release (SCUS-94666):** `c12_usa.exe` plays the North American disc. It runs the game as released there:
-60 Hz video and 30 game frames a second (the European one: 50 Hz, 25), which divides evenly into 60, 90, 120 and
-240 Hz displays and headsets. Extract it into `disc_usa\`, set `cue_usa=` in `c12.ini` and build with
-`build.ps1 -Region USA` (`gen_usa\`, `build_usa\`). The runtime and mods keep naming game code by its European
-address; `tools\region_map.py` matches the two executables (1666 of 1706 functions) and the US build translates
-(`runtime\region.cpp`, mod API 7 `addr()`).
-
-    python tools\extract_disc.py "<USA Track 1>.bin" disc_usa
-    powershell -File build.ps1 -Region USA
-
 Recommended: the [HD texture pack](https://drive.usercontent.google.com/download?id=1V-yUDHBOOER6eeMb6mEISXu1vibefYNk&export=download).
 Unpack it so the `.png` files sit directly in the `hd_textures` folder, not in a subfolder (any DuckStation-style `texupload-*` pack works).
 

@@ -1,6 +1,5 @@
 // GPU front-end: GP0/GP1 decoding, DMA, video timing. Rendering is delegated to a GpuBackend.
 #include "gpu.h"
-#include "region.h"
 #include "vr.h"
 #include "ui.h"
 #include <algorithm>
@@ -150,8 +149,8 @@ static int g_scope_flag_frame = -100;
 static bool scope_flag_recent() {
     u32 f;
     s16 h;
-    memcpy(&f, g_ram + GA(0xefdfc), 4);
-    memcpy(&h, g_ram + GA(0xf0ca4), 2);
+    memcpy(&f, g_ram + 0xefdfc, 4);
+    memcpy(&h, g_ram + 0xf0ca4, 2);
     if ((f & 0x400) || h == 1) g_scope_flag_frame = g_frame;
     return g_frame - g_scope_flag_frame <= 8;
 }
@@ -301,8 +300,8 @@ static float slot_depth() {
     // 800efdfc bit 0x80) shows its item icons as 3D models drawn among the world's primitives, at sort
     // depths behind the walls: no depth test then, as on the console.
     u32 menu, inv;
-    memcpy(&menu, g_ram + GA(0xf1338), 4);
-    memcpy(&inv, g_ram + GA(0xefdfc), 4);
+    memcpy(&menu, g_ram + 0xf1338, 4);
+    memcpy(&inv, g_ram + 0xefdfc, 4);
     if (menu == 1 || (inv & 0x80)) return 0.0f;
     int game_slot = g_ot_slots_cur - 1 - g_ot_index;
     return (g_list_3d && g_ot_slots_cur >= 1024 && game_slot >= 8) ? (float)(game_slot * 8) * 0.97f : 0.0f;
@@ -1099,7 +1098,7 @@ static void line_event(int, s64 late) {
 
 void gpu_init() {
     gpu_write_gp1(0);
-    if (!C12_NTSC) g_stat |= 0x100000;  // PAL console (a US build: NTSC)
+    g_stat |= 0x100000;  // PAL console
     sched_set(EV_GPU_LINE, 2168, line_event);
 }
 
