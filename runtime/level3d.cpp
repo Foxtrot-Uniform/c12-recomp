@@ -529,53 +529,10 @@ static void emit_snap(SnapSet& S, float t, const VrEyeXf& xf, int cx1, int cy1, 
     const Capture& prv = *pp;
     Camera cam = cur.cam;
     bool mix = prv.valid && t < 1.0f;
-    if (mix && fabsf(cam.eye[0] - prv.cam.eye[0]) + fabsf(cam.eye[1] - prv.cam.eye[1]) + fabsf(cam.eye[2] - prv.cam.eye[2]) >= 2000.0f)
-        mix = false;   // further = a camera cut: no blend
-    if (!desktop) {
-        // VR: each frame's camera was turned by the head orientation of its time (basis, from a first-person
-        // mod), but the eyes are placed by the newest frame's basis and the head's pose now. Blending the
-        // cameras as they are mixed old head turns into the picture: looking around juddered at the game's
-        // 25 Hz. Each camera is taken back to the body's own (basis removed), those are blended, and the result
-        // is expressed in the newest frame's head-turned camera that the eye placement expects.
-        //   eye rotation = T(eye) * T(basis^-1) * R,  T(basis^-1) = C M(basis) C,  T(basis) = C M(basis)^T C
-        auto body = [](const Capture& f, float out[9]) {
-            float m[9];
-            const float* q = f.basis;
-            float x = q[0], y = q[1], z = q[2], w = q[3];
-            m[0] = 1 - 2 * (y * y + z * z); m[1] = 2 * (x * y - z * w);     m[2] = 2 * (x * z + y * w);
-            m[3] = 2 * (x * y + z * w);     m[4] = 1 - 2 * (x * x + z * z); m[5] = 2 * (y * z - x * w);
-            m[6] = 2 * (x * z - y * w);     m[7] = 2 * (y * z + x * w);     m[8] = 1 - 2 * (x * x + y * y);
-            static const float c[3] = {1, -1, -1};
-            for (int i = 0; i < 3; i++)
-                for (int j = 0; j < 3; j++) {
-                    float s = 0;
-                    for (int k = 0; k < 3; k++) s += c[i] * m[i * 3 + k] * c[k] * f.cam.R[k * 3 + j];
-                    out[i * 3 + j] = s;
-                }
-        };
-        const Capture& nw = S.s[1];   // the frame whose basis the eyes use
-        float bc[9], bp[9], b[9];
-        body(cur, bc);
-        if (mix) { body(prv, bp); for (int i = 0; i < 9; i++) b[i] = bp[i] + (bc[i] - bp[i]) * t; }
-        else memcpy(b, bc, sizeof b);
-        const float* q = nw.basis;
-        float x = q[0], y = q[1], z = q[2], w = q[3];
-        float m[9] = {1 - 2 * (y * y + z * z), 2 * (x * y - z * w), 2 * (x * z + y * w),
-                      2 * (x * y + z * w), 1 - 2 * (x * x + z * z), 2 * (y * z - x * w),
-                      2 * (x * z - y * w), 2 * (y * z + x * w), 1 - 2 * (x * x + y * y)};
-        static const float c[3] = {1, -1, -1};
-        for (int i = 0; i < 3; i++)
-            for (int j = 0; j < 3; j++) {
-                float s = 0;
-                for (int k = 0; k < 3; k++) s += c[i] * m[k * 3 + i] * c[k] * b[k * 3 + j];   // C M^T C * body
-                cam.R[i * 3 + j] = s;
-            }
-    }
     if (mix) {
-        float R[9];
-        memcpy(R, cam.R, sizeof R);
-        lerp_cam(prv.cam, cur.cam, t, cam);
-        if (!desktop) memcpy(cam.R, R, sizeof R);   // VR: rotation blended above
+        float d = fabsf(cam.eye[0] - prv.cam.eye[0]) + fabsf(cam.eye[1] - prv.cam.eye[1]) + fabsf(cam.eye[2] - prv.cam.eye[2]);
+        if (d < 2000.0f) lerp_cam(prv.cam, cur.cam, t, cam);
+        else mix = false;
     }
     static std::vector<std::array<float, 12>> gm;
     gm.resize(cur.groups.size());

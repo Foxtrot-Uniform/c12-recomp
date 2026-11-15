@@ -444,12 +444,7 @@ static LRESULT CALLBACK wndproc(HWND h, UINT m, WPARAM w, LPARAM l) {
     case WM_KEYDOWN:
         if (l & 0x40000000) return 0;   // auto-repeat
         if (w == VK_ESCAPE || w == VK_F1) ui_toggle_menu();
-        else if (w == VK_TAB) {
-            // in a headset the classic picture has no 3D scene to show: Tab would drop VR to a flat screen
-            extern void (*g_vr_pacer)(double until);
-            if (g_vr_pacer) ui_notify("Tab (classic view) is off while VR is on");
-            else settings_toggle_classic();
-        }
+        else if (w == VK_TAB) settings_toggle_classic();
         else if (w == VK_OEM_3) g_turbo = true;
         else if (w == VK_F11) plat_toggle_fullscreen();
         else if (w == VK_F5) state_request_save(state_quick_path());

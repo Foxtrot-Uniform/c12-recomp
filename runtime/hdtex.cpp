@@ -12,11 +12,6 @@
 #include "../third_party/xxhash.h"
 #include <unordered_map>
 #include <algorithm>
-#include <atomic>
-#include <mutex>
-#include <condition_variable>
-#include <thread>
-#include <deque>
 #include "savestate.h"
 
 struct RepName {
@@ -28,13 +23,6 @@ struct RepName {
     std::wstring path;
     ID3D11ShaderResourceView* srv = nullptr;
     bool failed = false;
-    // background decoding: 0 not asked, 1 queued, 2 decoded (px), 3 failed
-    std::atomic<int> state{0};
-    std::vector<u8> px;
-    UINT pw = 0, ph = 0;
-    RepName() = default;
-    RepName(const RepName& o) : src_hash(o.src_hash), pal_hash(o.pal_hash), mode(o.mode), stp(o.stp), sw(o.sw), sh(o.sh),
-        ox(o.ox), oy(o.oy), w(o.w), h(o.h), pmin(o.pmin), pmax(o.pmax), path(o.path) {}
 };
 struct Write { int x, y, w, h; u64 hash; };
 
@@ -99,7 +87,6 @@ static u64 hash_rect(int x, int y, int w, int h) {
     return XXH3_64bits_digest(&st);
 }
 
-static void request(RepName* n);
 void hdtex_on_upload(int x, int y, int w, int h) {
     if (!g_hd_on) return;
     if (x + w > 1024) w = 1024 - x;
@@ -113,16 +100,7 @@ void hdtex_on_upload(int x, int y, int w, int h) {
     g_writes.push_back(wr);
     g_cache.clear();
     g_stat_uploads++;
-    if (g_names.count(wr.hash) || g_names.count(wr.hash ^ 1)) {
-        g_stat_hits++;
-        // start decoding every replacement of this upload now (drawn a moment later, or in a while)
-        if (g_cfg.hd_enabled)
-            for (u64 k : {wr.hash, wr.hash ^ 1}) {
-                auto range = g_names.equal_range(k);
-                for (auto r = range.first; r != range.second; ++r)
-                    if (r->second->src_hash == wr.hash && r->second->sw == w && r->second->sh == h) request(r->second);
-            }
-    }
+    if (g_names.count(wr.hash) || g_names.count(wr.hash ^ 1)) g_stat_hits++;
 }
 
 void hdtex_invalidate(int x, int y, int w, int h) {
@@ -138,76 +116,24 @@ void hdtex_stats() {
     if (g_hd_on) logf("hd textures: %d uploads seen, %d matched the pack, %d images loaded\n", g_stat_uploads, g_stat_hits, g_stat_loaded);
 }
 
-// ---- loading: PNGs are decoded on a background thread ------------------------------------------------
-// Decoding a big PNG takes tens of milliseconds; done on the game's thread as a texture was first drawn,
-// it stalled the game (in a headset: dropped frames). A texture now starts decoding as soon as the game
-// uploads the VRAM data it replaces (usually while a level loads); until it is ready the original
-// texture is drawn. The D3D11 texture is made on the game's thread, a few per frame.
-static std::mutex g_q_mx;
-static std::condition_variable g_q_cv;
-static std::deque<RepName*> g_queue;
-static bool g_worker_started;
-static void decode_worker() {
-    CoInitializeEx(nullptr, COINIT_MULTITHREADED);
-    IWICImagingFactory* wic = nullptr;
-    CoCreateInstance(CLSID_WICImagingFactory, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&wic));
-    for (;;) {
-        RepName* n;
-        {
-            std::unique_lock<std::mutex> lk(g_q_mx);
-            g_q_cv.wait(lk, [] { return !g_queue.empty(); });
-            n = g_queue.front();
-            g_queue.pop_front();
-        }
-        bool ok = false;
-        IWICBitmapDecoder* dec = nullptr;
-        IWICBitmapFrameDecode* frame = nullptr;
-        IWICFormatConverter* conv = nullptr;
-        if (wic && SUCCEEDED(wic->CreateDecoderFromFilename(n->path.c_str(), nullptr, GENERIC_READ, WICDecodeMetadataCacheOnDemand, &dec)) &&
-            SUCCEEDED(dec->GetFrame(0, &frame)) && SUCCEEDED(wic->CreateFormatConverter(&conv)) &&
-            SUCCEEDED(conv->Initialize(frame, GUID_WICPixelFormat32bppRGBA, WICBitmapDitherTypeNone, nullptr, 0, WICBitmapPaletteTypeCustom))) {
-            UINT w, h;
-            conv->GetSize(&w, &h);
-            n->px.resize((size_t)w * h * 4);
-            if (SUCCEEDED(conv->CopyPixels(nullptr, w * 4, (UINT)n->px.size(), n->px.data()))) { n->pw = w; n->ph = h; ok = true; }
-        }
-        if (conv) conv->Release();
-        if (frame) frame->Release();
-        if (dec) dec->Release();
-        if (!ok) n->px.clear();
-        n->state.store(ok ? 2 : 3, std::memory_order_release);
-    }
-}
-static void request(RepName* n) {
-    int expect = 0;
-    if (!n->state.compare_exchange_strong(expect, 1)) return;
-    {
-        std::lock_guard<std::mutex> lk(g_q_mx);
-        if (!g_worker_started) { g_worker_started = true; std::thread(decode_worker).detach(); }
-        g_queue.push_back(n);
-    }
-    g_q_cv.notify_one();
-}
-static int g_made_frame = -1, g_made_n;
 static bool load_png(RepName* n) {
     if (n->srv) return true;
     if (n->failed) return false;
-    int st = n->state.load(std::memory_order_acquire);
-    if (st == 0) { request(n); return false; }
-    if (st == 1) return false;
-    if (st == 3) { n->failed = true; return false; }
-    // decoded: make the texture, at most 4 a frame
-    if (g_made_frame != g_frame) { g_made_frame = g_frame; g_made_n = 0; }
-    if (g_made_n >= 4) return false;
-    g_made_n++;
     n->failed = true;
     ID3D11Device* dev = hw_device();
     if (!dev) return false;
+    if (!g_wic && FAILED(CoCreateInstance(CLSID_WICImagingFactory, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&g_wic)))) return false;
+    IWICBitmapDecoder* dec = nullptr;
+    IWICBitmapFrameDecode* frame = nullptr;
+    IWICFormatConverter* conv = nullptr;
     bool ok = false;
-    {
-        UINT w = n->pw, h = n->ph;
-        std::vector<u8> px = std::move(n->px);
-        {
+    if (SUCCEEDED(g_wic->CreateDecoderFromFilename(n->path.c_str(), nullptr, GENERIC_READ, WICDecodeMetadataCacheOnDemand, &dec)) &&
+        SUCCEEDED(dec->GetFrame(0, &frame)) && SUCCEEDED(g_wic->CreateFormatConverter(&conv)) &&
+        SUCCEEDED(conv->Initialize(frame, GUID_WICPixelFormat32bppRGBA, WICBitmapDitherTypeNone, nullptr, 0, WICBitmapPaletteTypeCustom))) {
+        UINT w, h;
+        conv->GetSize(&w, &h);
+        std::vector<u8> px((size_t)w * h * 4);
+        if (SUCCEEDED(conv->CopyPixels(nullptr, w * 4, (UINT)px.size(), px.data()))) {
             D3D11_TEXTURE2D_DESC td = {};
             td.Width = w; td.Height = h; td.MipLevels = 0; td.ArraySize = 1; td.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
             td.SampleDesc.Count = 1; td.Usage = D3D11_USAGE_DEFAULT;
@@ -225,6 +151,9 @@ static bool load_png(RepName* n) {
             }
         }
     }
+    if (conv) conv->Release();
+    if (frame) frame->Release();
+    if (dec) dec->Release();
     n->failed = !ok;
     return ok;
 }
