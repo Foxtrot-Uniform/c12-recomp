@@ -146,7 +146,9 @@ runtime (SteamVR, Oculus/Meta, WMR, Virtual Desktop...). Switch it on in the set
   into each eye at their sort depth.
 * With the first-person mod the camera turns with your head: W/A/S/D and aiming follow where you look, the mouse
   turns the body. Without it the head looks around the game's own camera.
-* The HUD floats in front of you; menus, loading screens and films are shown on a screen ahead.
+* The HUD floats in front of you; menus, loading screens and films are shown on a screen ahead. Both are drawn
+  into the eye pictures (some runtimes, such as SteamVR with a PSVR2, did not show separate panels). Tab (classic
+  view) is off while VR is on; the level is drawn as wide as the headset sees (`vr_frustum`, degrees of margin).
 * Settings (Mods tab): world scale, render scale, HUD and screen distance / width.
 * Testing without a headset: `--vr_test 1` with test screenshots writes both eyes and the HUD; `mods_src\vr\README.md`
   describes the simulated OpenXR runtime (`vr_xr_test_runtime.dll`, captures of what each eye sees).
