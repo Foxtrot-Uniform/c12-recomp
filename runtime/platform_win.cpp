@@ -6,6 +6,7 @@
 #include <xinput.h>
 #include <mmsystem.h>
 #include "gpu.h"
+#include "region.h"
 #include "ui.h"
 #include "savestate.h"
 #include <deque>
@@ -182,7 +183,7 @@ void plat_input_poll() {
     // While the first-person view button (R2) is held the same motion also drives the left stick.
     // manning a gun turret (view mode 800f0ca4 = 2): the mouse aims it like the first-person view
     s16 view_mode;
-    memcpy(&view_mode, g_ram + 0xf0ca4, 2);
+    memcpy(&view_mode, g_ram + GA(0xf0ca4), 2);
     bool turret = view_mode == 2;
     bool aiming = (down & (1u << 9)) || turret;
     if (focus && g_cfg.mouse && g_captured) {
@@ -240,8 +241,8 @@ void plat_input_poll() {
         fy -= iy; fp -= ip;
         if (iy || ip) {
             s16 yaw, pitch;
-            memcpy(&pitch, g_ram + 0xf0ca6, 2);
-            memcpy(&yaw, g_ram + 0xf0ca8, 2);
+            memcpy(&pitch, g_ram + GA(0xf0ca6), 2);
+            memcpy(&yaw, g_ram + GA(0xf0ca8), 2);
             if (turret) {
                 // the turret looks through a zoomed view: the same turn sweeps much more of the
                 // screen, so it turns slower (g_turret_sens, default 0.35)
@@ -253,8 +254,8 @@ void plat_input_poll() {
                 // limits (its description at 800f0cb4+0xbc) on its next update, and turns the gun
                 yaw = (s16)(yaw + iy);
                 pitch = (s16)(pitch + ip);   // same sense as the scope's (and its invert setting)
-                memcpy(g_ram + 0xf0ca6, &pitch, 2);
-                memcpy(g_ram + 0xf0ca8, &yaw, 2);
+                memcpy(g_ram + GA(0xf0ca6), &pitch, 2);
+                memcpy(g_ram + GA(0xf0ca8), &yaw, 2);
                 goto aim_done;
             }
             yaw = (s16)(((yaw + iy) & 0xfff));
@@ -262,10 +263,10 @@ void plat_input_poll() {
             if (np > 780) np = 780;
             if (np < -780) np = -780;
             pitch = (s16)np;
-            memcpy(g_ram + 0xf0ca6, &pitch, 2);
-            memcpy(g_ram + 0xf0ca8, &yaw, 2);
+            memcpy(g_ram + GA(0xf0ca6), &pitch, 2);
+            memcpy(g_ram + GA(0xf0ca8), &yaw, 2);
             u32 hero;
-            memcpy(&hero, g_ram + 0xefdb8, 4);
+            memcpy(&hero, g_ram + GA(0xefdb8), 4);
             if ((hero >> 24) == 0x80 && (hero & 0x1FFFFF) + 0x28 < RAM_SIZE) {
                 double a = yaw * (6.283185307179586 / 4096.0);
                 s16 cs = (s16)lround(cos(a) * 4096.0), sn = (s16)lround(sin(a) * 4096.0), msn = (s16)-sn;
@@ -508,7 +509,7 @@ void plat_pump() {
     }
     update_capture();
     // pace to the emulated refresh rate
-    double period = 1.0 / 49.76;
+    double period = C12_NTSC ? 1.0 / 59.94 : 1.0 / 49.76;
     double now = plat_time();
     extern double g_game_clock;   // the steady time of this refresh (level3d.cpp blends by it)
     if (g_turbo && !ui_menu_open()) { g_next_frame = now; g_game_clock = now; return; }

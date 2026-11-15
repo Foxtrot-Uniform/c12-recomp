@@ -28,6 +28,7 @@
 //   Fog: depth-cue table u16 *(0x800f95bc) and CLUT-row table u8 *(0x800f95c0), indexed by view z>>6;
 //   zone flags 0x800f89a0 (bit0: fogged CLUT rows), fog end 0x800f89f0 (16.16).
 #include "psx.h"
+#include "region.h"
 #include "gpu.h"
 #include "gpu3d.h"
 #include "savestate.h"
@@ -95,7 +96,7 @@ bool scene3d_enabled() { return g_level3d && n3_available() && !settings_is_clas
 // A new one starts when the game builds into another table (they alternate) or the current one has
 // been drawn. The menus' item icons have a view (and ordering table) of their own.
 static Capture* scene_cap(u32 view = 0) {
-    u32 mainv = rd32(0x800efde0);
+    u32 mainv = rd32(GA(0x800efde0));
     if (!view) view = mainv;
     if (!ptr_ok(view)) return nullptr;
     int vk = view == mainv ? 0 : 1;
@@ -210,9 +211,9 @@ bool level3d_capture(Ctx* c) {
         for (auto& cp : g_cap) cp.valid = false;
         return false;
     }
-    u32 view = rd32(0x800efde0), poly = c->r[4];
+    u32 view = rd32(GA(0x800efde0)), poly = c->r[4];
     if (!ptr_ok(view) || !ptr_ok(poly)) return false;
-    u32 faces = rd32(poly + 0x10), verts = rd32(poly + 0x14), uvtab = rd32(poly + 0x18), mats = rd32(0x800f00cc);
+    u32 faces = rd32(poly + 0x10), verts = rd32(poly + 0x14), uvtab = rd32(poly + 0x18), mats = rd32(GA(0x800f00cc));
     u16 nverts = rd16(poly + 0x0a);
     if (!ptr_ok(faces) || !ptr_ok(verts) || !ptr_ok(mats)) return false;
     Capture* cp = scene_cap();
@@ -222,10 +223,10 @@ bool level3d_capture(Ctx* c) {
     group_begin(cap, 0, k_ident);
 
     // fog
-    u32 dq = rd32(0x800f95bc), fog8 = rd32(0x800f95c0);
-    int dqn = rd16(0x800f95c4) + 0x40;
-    u16 zflags = rd16(0x800f89a0);
-    float far_z = (float)((s32)rd32(0x800f89f0) >> 16);
+    u32 dq = rd32(GA(0x800f95bc)), fog8 = rd32(GA(0x800f95c0));
+    int dqn = rd16(GA(0x800f95c4)) + 0x40;
+    u16 zflags = rd16(GA(0x800f89a0));
+    float far_z = (float)((s32)rd32(GA(0x800f89f0)) >> 16);
     float fogc[3];
     for (int i = 0; i < 3; i++) fogc[i] = (float)(rds16(view + 0xc8 + i * 2) >> 4);
     auto dq_at = [&](float z) -> float {
@@ -235,12 +236,12 @@ bool level3d_capture(Ctx* c) {
         return rd16(dq + i * 2) / 4096.0f;
     };
 
-    int ncell = (int)rd32(0x800f8a2c);
+    int ncell = (int)rd32(GA(0x800f8a2c));
     if (ncell < 0 || ncell > 150) ncell = 0;
     static std::vector<u32> seen;
     seen.clear();
     for (int e = 0; e < ncell; e++) {
-        u32 ent = 0x800f8b50 + e * 12;
+        u32 ent = GA(0x800f8b50) + e * 12;
         int cnt = rd16(ent);
         u32 idx = rd32(ent + 8);
         if (!ptr_ok(idx)) continue;
@@ -713,7 +714,7 @@ bool meshfx_capture(Ctx* c, RecompFn orig) {
 static int meshfx_do(Ctx* c, RecompFn orig) {
     if (!scene3d_enabled() || !(g_n3_parts & 2)) return 0;
     u32 obj = c->r[4], view = c->r[5];
-    if (!ptr_ok(obj) || view != rd32(0x800efde0)) return 0;
+    if (!ptr_ok(obj) || view != rd32(GA(0x800efde0))) return 0;
     u32 fl = rd32(obj + 0xc);
     if (fl & (0x2 | 0x4 | 0x8 | 0x20000 | 0x800000)) return 0;
     if (rd32(obj + 0x38) != 0 || g_ram[(obj + 0x4a) & 0x1FFFFF] != 3) return 0;
@@ -748,7 +749,7 @@ static int meshfx_do(Ctx* c, RecompFn orig) {
     }
     int ir0 = rds16(obj + 0x46);
     if (fl & 0x200000) {
-        u32 h = rd32(0x800efdb8);
+        u32 h = rd32(GA(0x800efdb8));
         if (ptr_ok(h)) { u32 hb = rd32(h + 0xb0); if (ptr_ok(hb) && (rd32(hb + 0x10) & 0x8000000)) ir0 = 0; }
     }
     s16 fc[3];
@@ -1004,7 +1005,7 @@ static int ptmodel_do(Ctx* c) {
             u32 r = blk + 8;
             // record sizes and the game's drivers (9 / 0xa, per-vertex colour without texture: not handled)
             static const int rsize[13] = {8, 0xc, 0xc, 0x18, 0x18, 0x10, 0x10, 0x1c, 0x20, 0x18, 0x1c, 0x24, 0x2c};
-            static const u32 drv[13] = {0x800b9320, 0x800aa160, 0x800aa57c, 0x800a8d74, 0x800a91c0, 0x800aa350, 0x800aa7a4, 0x800a8f7c, 0x800a9408, 0, 0, 0x800a8738, 0x800a8a0c};
+            static const u32 drv[13] = {GA(0x800b9320), GA(0x800aa160), GA(0x800aa57c), GA(0x800a8d74), GA(0x800a91c0), GA(0x800aa350), GA(0x800aa7a4), GA(0x800a8f7c), GA(0x800a9408), 0, 0, GA(0x800a8738), GA(0x800a8a0c)};
             u32 dt = rd32(inst + 0x30), de = (ptr_ok(dt) && id < 13) ? rd32(dt + 4u * id) : 0;
             if (id >= 13 || !drv[id] || !ptr_ok(de) || rd32(de + 4) != drv[id]) { group_end(cap); return (g_pm_why = 1000 + id, give_up()); }
             for (int k = 0; k < cnt; k++, r += rsize[id]) {
@@ -1149,8 +1150,8 @@ static void quad_tris(Capture& cap, const LvVtx L[4], const N3Mat& m) {   // PS1
 bool sky3d_capture(Ctx* c) {
     (void)c;
     if (!scene3d_enabled() || !(g_n3_parts & 8)) return false;
-    if (!(rd16(0x800f6d6a) & 2)) return true;                   // sky off: the original draws nothing either
-    u32 geom = rd32(0x800f6d70), bands = rd32(0x800f6d74), mats = rd32(0x800f00cc);
+    if (!(rd16(GA(0x800f6d6a)) & 2)) return true;                   // sky off: the original draws nothing either
+    u32 geom = rd32(GA(0x800f6d70)), bands = rd32(GA(0x800f6d74)), mats = rd32(GA(0x800f00cc));
     if (!ptr_ok(geom) || rd32(geom) != 0x44594b53) return false;   // 'SKYD'
     int nr = rds16(geom + 4), nc = rds16(geom + 6);
     u32 verts = rd32(geom + 0xc);
@@ -1158,9 +1159,9 @@ bool sky3d_capture(Ctx* c) {
     Capture* cp = scene_cap();
     if (!cp) return false;
     Capture& cap = *cp;
-    float M[12] = {1, 0, 0, 0, 1, 0, 0, 0, 1, 0, (float)rds16(0x800f6d64), 0};
+    float M[12] = {1, 0, 0, 0, 1, 0, 0, 0, 1, 0, (float)rds16(GA(0x800f6d64)), 0};
     Group& g = group_begin(cap, 0, M, GK_SKY);
-    float hs = (float)rd16(0x800f6d68);
+    float hs = (float)rd16(GA(0x800f6d68));
     g.sxy = cap.cam.h > 0.0f && hs > 0.0f ? hs / cap.cam.h : 1.0f;
     int gi = (int)cap.groups.size() - 1;
     auto vtx = [&](int r, int col, float u, float v, u32 rgb) {
@@ -1177,7 +1178,7 @@ bool sky3d_capture(Ctx* c) {
             LvVtx L[4] = {vtx(r + 1, i, 0, 0, vcol(r + 1, i)), vtx(r + 1, i + 1, 0, 0, vcol(r + 1, i + 1)), vtx(r, i, 0, 0, vcol(r, i)), vtx(r, i + 1, 0, 0, vcol(r, i + 1))};
             quad_tris(cap, L, flat);
         }
-    int nb = rd16(0x800f6d6e);
+    int nb = rd16(GA(0x800f6d6e));
     if (ptr_ok(bands) && ptr_ok(mats) && nb > 0 && nb < 32) {
         int step = 0x8000 / nb;
         for (int b = 0; b < nb; b++) {
@@ -1208,7 +1209,7 @@ bool sky3d_capture(Ctx* c) {
 // The one-quad mode is then built here; the ground-following 2x2 mode stays on the PS1 path.
 bool shadow3d_capture(Ctx* c, RecompFn orig) {
     if (!scene3d_enabled() || !(g_n3_parts & 16)) return false;
-    u32 obj = rd32(0x800efdc8);
+    u32 obj = rd32(GA(0x800efdc8));
     if (!ptr_ok(obj)) return false;
     u32 o0c = rd32(obj + 0xc);
     if (!ptr_ok(o0c) || (rd32(o0c + 0x18) & 0x100)) return false;
@@ -1226,7 +1227,7 @@ bool shadow3d_capture(Ctx* c, RecompFn orig) {
         u32 save[32];
         memcpy(save, c->r, sizeof save);
         c->r[4] = coord + 0x44;
-        guest_call(c, 0x8002ea88);
+        guest_call(c, GA(0x8002ea88));
         gr = c->r[2];
         memcpy(c->r, save, sizeof save);
     }
@@ -1278,7 +1279,7 @@ bool shadow3d_capture(Ctx* c, RecompFn orig) {
 bool decals3d_capture(Ctx* c) {
     (void)c;
     if (!scene3d_enabled() || !(g_n3_parts & 16)) return false;
-    u32 world = rd32(0x800efea4), mats = rd32(0x800f00cc);
+    u32 world = rd32(GA(0x800efea4)), mats = rd32(GA(0x800f00cc));
     if (!ptr_ok(world) || !ptr_ok(mats)) return false;
     u32 faces = rd32(world + 0x18);
     if (!ptr_ok(faces)) return false;
@@ -1289,9 +1290,9 @@ bool decals3d_capture(Ctx* c) {
     const Camera& cam = cap.cam;
     group_begin(cap, 0, k_ident, GK_NORMAL, 0.006f);
     int gi = (int)cap.groups.size() - 1;
-    int head = rd16(0x800fc054) & 63, tail = rd16(0x800fc056) & 63;
+    int head = rd16(GA(0x800fc054)) & 63, tail = rd16(GA(0x800fc056)) & 63;
     for (int i = head; i != tail; i = (i + 1) & 63) {
-        u32 e = 0x800fc058 + 0x18u * i;
+        u32 e = GA(0x800fc058) + 0x18u * i;
         int fi = rds16(e + 6);
         if (fi < 0 || (rd32(faces + 16u * fi + 0xc) & 0xc10)) continue;
         float P[4][3];
@@ -1304,7 +1305,7 @@ bool decals3d_capture(Ctx* c) {
         if (n[0] * d[0] + n[1] * d[1] + n[2] * d[2] <= 0) continue;
         int life = rds16(e + 0xe);
         u32 grey = (u32)(life < 0 ? 0 : life * 4 > 255 ? 255 : life * 4) * 0x010101;
-        int mi = rds16(0x800efb90 + 2 * (rd16(e + 0x16) & 1));
+        int mi = rds16(GA(0x800efb90) + 2 * (rd16(e + 0x16) & 1));
         u32 m = mi >= 0 ? rd32(mats + 4u * mi) : 0;
         if (!ptr_ok(m)) continue;
         float uv[4][2];

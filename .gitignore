@@ -21,3 +21,8 @@ bookmarks.txt
 mods/*.json
 mods_src/vr/third_party/openxr/bin/
 dist/
+disc_usa/
+gen_usa/
+build_usa/
+c12_usa.exe
+__pycache__/

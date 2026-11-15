@@ -2,6 +2,7 @@
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
 #include <windows.h>
+#include "region.h"
 #include <commdlg.h>
 #include "gpu.h"
 #include "ui.h"
@@ -10,7 +11,13 @@
 
 static void parse_kv(const std::string& k, const std::string& v) {
     auto I = [&](int& d) { d = atoi(v.c_str()); };
+#ifdef C12_USA
+    if (k == "cue_usa") g_cfg.cue = v;
+    else if (k == "cue") g_cfg.cue_other = v;
+#else
     if (k == "cue") g_cfg.cue = v;
+    else if (k == "cue_usa") g_cfg.cue_other = v;
+#endif
     else if (k == "mods") g_cfg.moddir = v;
     else if (k == "memcard") g_cfg.memcard = v;
     else if (k == "hd_textures") g_cfg.hd_textures = v;
@@ -177,15 +184,21 @@ int main(int argc, char** argv) {
     if (save_cfg) { settings_save("c12.ini"); return 0; }
     bool picked = false;
     if (g_cfg.cue.empty() || GetFileAttributesA(g_cfg.cue.c_str()) == INVALID_FILE_ATTRIBUTES) {
-        if (g_cfg.headless || !pick_disc()) { fail("No disc image selected. Set cue=<path to .cue> in c12.ini."); return 1; }
+        if (g_cfg.headless || !pick_disc()) { fail(C12_NTSC ? "No disc image selected. Set cue_usa=<path to .cue> in c12.ini." : "No disc image selected. Set cue=<path to .cue> in c12.ini."); return 1; }
         picked = true;
     }
     if (!g_cfg.shot_dir.empty()) _mkdir(g_cfg.shot_dir.c_str());
     core_init();
+    { extern void profiler_start(); profiler_start(); }
     if (!cdrom_init(g_cfg.cue)) { fail(("Cannot open the disc image:\n" + g_cfg.cue + "\n(the .bin files must be next to the .cue)").c_str()); return 1; }
     std::vector<u8> exe;
+#ifdef C12_USA
+    if (!cdrom_read_file("SCUS_946.66", exe) || !load_exe_mem(exe.data(), exe.size())) {
+        fail("This disc is not C-12: Final Resistance (USA, SCUS-94666). c12_usa.exe plays the US release (cue_usa= in c12.ini); c12.exe the European one.");
+#else
     if (!cdrom_read_file("SCES_033.64", exe) || !load_exe_mem(exe.data(), exe.size())) {
-        fail("This disc is not C-12: Final Resistance (Europe, SCES-03364).");
+        fail("This disc is not C-12: Final Resistance (Europe, SCES-03364). c12.exe plays the European release; c12_usa.exe the US one.");
+#endif
         return 1;
     }
     g_ws_scale = g_cfg.widescreen ? 0.75f : 1.0f;
