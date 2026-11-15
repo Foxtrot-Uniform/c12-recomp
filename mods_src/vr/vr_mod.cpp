@@ -228,6 +228,45 @@ float4 ps_hud(V i) : SV_Target {
         return o;
     }
 
+    // The headset's predicted display time on the game's clock (time_now): the scene is blended to the
+    // moment each picture is seen, so motion is even at any refresh rate. XrTime and the game's clock
+    // both run steadily; the offset between them is set once (and again only if they drift apart).
+    double g_xr_offset;
+    bool g_xr_offset_ok;
+    int64_t g_last_display;
+    // frame timing for vr.log: headset frames, how many came later than one display period, and the
+    // longest stretch the game itself took between two headset frames
+    int g_stat_frames, g_stat_late;
+    double g_stat_t0, g_stat_game_max, g_frame_end_t;
+    void displayTime(double now)
+    {
+        const int64_t xt = vr::predictedDisplayTime();
+        if (!xt || g_api->version < 6 || !g_api->vr_set_display_time)
+            return;
+        const double xs = xt * 1e-9;
+        if (!g_xr_offset_ok || fabs(xs + g_xr_offset - (now + 0.02)) > 0.1)
+        {
+            g_xr_offset = now + 0.02 - xs;
+            g_xr_offset_ok = true;
+        }
+        g_api->vr_set_display_time(xs + g_xr_offset);
+        const double period = vr::refreshHz() > 0 ? 1.0 / vr::refreshHz() : 0.011;
+        if (g_last_display && (xt - g_last_display) * 1e-9 > period * 1.5)
+            g_stat_late++;
+        g_last_display = xt;
+        g_stat_frames++;
+        if (g_stat_t0 == 0)
+            g_stat_t0 = now;
+        if (now - g_stat_t0 >= 10.0)
+        {
+            vr::log("frames: %.1f a second, %d late (skipped a display refresh), game took up to %.1f ms between frames\n",
+                    g_stat_frames / (now - g_stat_t0), g_stat_late, g_stat_game_max * 1000.0);
+            g_stat_frames = g_stat_late = 0;
+            g_stat_game_max = 0;
+            g_stat_t0 = now;
+        }
+    }
+
     // One headset frame. Returns false when no frame could be made (session not running).
     bool frame()
     {
@@ -243,6 +282,7 @@ float4 ps_hud(V i) : SV_Target {
         double now = g_api->time_now();
         double dt = g_last_frame_t > 0 ? now - g_last_frame_t : 0.011;
         g_last_frame_t = now;
+        displayTime(now);
         vr::Hand hd[2];
         if (vr::syncInput(hd)) { controls(hd, dt); hands(hd); }
         else { g_api->set_aim_ray(0, nullptr, nullptr); g_api->vr_set_beam(0, nullptr, 0, 0); g_api->vr_set_hand(0, nullptr); g_api->vr_set_hand(1, nullptr); }
@@ -320,12 +360,19 @@ float4 ps_hud(V i) : SV_Target {
             }
         }
         vr::endFrame(proj, quads, nq);
+        g_frame_end_t = g_api->time_now();
         return true;
     }
 
     // the runtime's frame pacing: headset frames until the game's next frame is due
     void waitUntil(double t)
     {
+        if (g_frame_end_t > 0)
+        {
+            const double game = g_api->time_now() - g_frame_end_t;   // the game's own work since the last headset frame
+            if (game < 0.2 && game > g_stat_game_max)
+                g_stat_game_max = game;
+        }
         for (int guard = 0; guard < 64; guard++)
         {
             if (g_api->time_now() >= t)

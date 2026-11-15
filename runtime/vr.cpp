@@ -195,7 +195,9 @@ static int api_vr_render(const C12VrView* views, float upm, int w, int h, C12VrI
     if (!d.blank && hw_xtarget_make(6, cw, ch)) { hw_xtarget_copy_display(6, d); out->cinema = hw_xtarget_texture(6); out->cinema_w = cw; out->cinema_h = ch; }
     int ax, ay, aw, ah, ox, oy;
     VrCamInfo ci;
-    if (!scene3d_enabled() || !gpu_vr_have_world() || !gpu_vr_world_area(ax, ay, aw, ah, ox, oy) || !level3d_vr_cam(ci)) return 0;
+    // only while the shown picture is the newest world frame: after the hero dies the game goes back to
+    // its menus, which must come up on the screen (the eyes kept drawing the last world frame)
+    if (!scene3d_enabled() || !gpu_vr_have_world() || !gpu_desktop_ready(d, 0.5) || !gpu_vr_world_area(ax, ay, aw, ah, ox, oy) || !level3d_vr_cam(ci)) return 0;
     const float black[4] = {0, 0, 0, 1}, clear0[4] = {0, 0, 0, 0}, white[4] = {1, 1, 1, 0};
     for (int e = 0; e < 2; e++) {
         VrEyeXf xf;
@@ -235,8 +237,11 @@ static void api_vr_set_hand(int h, const C12VrPose* p) { if (h < 0 || h > 1) ret
 static int api_vr_get_hand(int h, C12VrPose* p) { if (h < 0 || h > 1 || !g_hand_ok[h]) return 0; if (p) *p = g_hand[h]; return 1; }
 
 static void* api_d3d11_device() { return (void*)hw_device(); }
-static void api_set_pacer(void (*fn)(double)) { g_vr_pacer = fn; if (!fn) g_vr_active = false; }
+extern double g_vr_display_time;
+static void api_set_pacer(void (*fn)(double)) { g_vr_pacer = fn; if (!fn) { g_vr_active = false; g_vr_display_time = 0; } }
 static double api_time_now() { return plat_time(); }
+extern double g_vr_display_time;   // level3d.cpp
+static void api_vr_set_display_time(double t) { g_vr_display_time = t; }
 static void api_vr_set_head(const C12VrPose* p) { g_head_ok = p != nullptr; if (p) g_head = *p; }
 static int api_vr_get_head(C12VrPose* p) { if (g_head_ok && p) *p = g_head; return g_head_ok ? 1 : 0; }
 static void api_vr_set_basis(const float q[4]) { level3d_vr_basis(q); }
@@ -313,6 +318,7 @@ void vr_fill_api(C12ModApi& api) {
     api.set_pacer = api_set_pacer;
     api.time_now = api_time_now;
     api.vr_render = api_vr_render;
+    api.vr_set_display_time = api_vr_set_display_time;
     api.vr_set_head = api_vr_set_head;
     api.vr_get_head = api_vr_get_head;
     api.vr_set_basis = api_vr_set_basis;
