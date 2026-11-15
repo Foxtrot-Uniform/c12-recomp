@@ -505,11 +505,9 @@ void plat_pump() {
     // pace to the emulated refresh rate
     double period = 1.0 / 49.76;
     double now = plat_time();
-    extern double g_game_clock;   // the steady time of this refresh (level3d.cpp blends by it)
-    if (g_turbo && !ui_menu_open()) { g_next_frame = now; g_game_clock = now; return; }
+    if (g_turbo && !ui_menu_open()) { g_next_frame = now; return; }
     if (g_next_frame < now - 0.1) g_next_frame = now;
     g_next_frame += period;
-    g_game_clock = g_next_frame;
     extern void (*g_vr_pacer)(double until);
     extern bool vr_desktop_pace(double until);
     if (g_vr_pacer) g_vr_pacer(g_next_frame);   // a VR mod: headset frames until then

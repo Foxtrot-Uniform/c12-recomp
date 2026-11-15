@@ -803,9 +803,9 @@ static void vr_record(u32 madr, int slots, const FrontState& fs) {
 }
 bool gpu_vr_have_world() { return g_rec_have_world; }
 // the picture shown now is the newest recorded world frame (a 3D scene, not a film or a menu screen)
-bool gpu_desktop_ready(const GpuDisplay& d, double max_age) {
+bool gpu_desktop_ready(const GpuDisplay& d) {
     extern double plat_time();
-    if (!g_rec_have_world || plat_time() - g_rec_world_time > max_age) return false;
+    if (!g_rec_have_world || plat_time() - g_rec_world_time > 0.15) return false;
     const GpuState& ws = g_rec_world.fs.st;
     // the game draws the next frame into the hidden buffer (other y) while this one is shown: the newest
     // world frame belongs to the shown picture when it lies in the same columns

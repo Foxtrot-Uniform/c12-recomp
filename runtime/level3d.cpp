@@ -34,10 +34,9 @@
 #include "vr.h"
 #include <vector>
 #include <array>
-#include <algorithm>
 #include <math.h>
 #include <string.h>
-#include <stdlib.h>
+
 int g_level3d = 1;   // option level3d: 0 = the game's own level renderer
 int g_n3_parts = 31; // option n3_parts (debug): native 1 level, 2 effect meshes, 4 objects, 8 sky, 16 shadows + marks
 
@@ -425,52 +424,11 @@ void level3d_emit(u32 slot_addr, bool interp, bool blend, int off_x, int off_y, 
 
 // a save state was loaded: captures from before belong to another game
 // ---- the scenes of the last two frames, drawn again later (VR eyes, pictures at the monitor's rate) --
-// Per view kind (the world, the menus' icons): [0] the frame before, [1] the newest, each stamped with
-// the game clock: the steady time of the console refresh it was made in (g_game_clock), not when the
-// emulation happened to get there - that is quantised to the pacer's frames (a headset's 8-14 ms).
-// A picture shown at time T shows the moment T - delay, blended between the two frames. The delay
-// follows how far ahead of the newest frame pictures are shown (the largest lead of each second, the
-// median of the last five seconds, changing by at most 10 ms a second), so the blend moves evenly
-// with the game's time and still never runs past the newest frame. Uneven arrival made the old
-// "time since the frame arrived" blend speed up and slow down: judder in a headset.
-struct SnapSet {
-    Capture s[2], older; u32 seq = 0; double time = 0, time_prev = 0, time_older = 0;
-    double delay = 0.07, last_T = 0, win_start = 0, win_max = 0, wins[5] = {}; int nwin = 0;
-};
+// Per view kind (the world, the menus' icons): [0] the frame before, [1] the newest, and when the newest
+// arrived; a picture at time `now` is blended between them by (now - time) / dt.
+struct SnapSet { Capture s[2]; u32 seq = 0; double time = 0, dt = 0.04; };
 static SnapSet g_snap[2];
 double plat_time();
-double g_game_clock;            // platform_win.cpp: the steady time of the current console refresh
-double g_vr_display_time;       // VR: when the pictures drawn now will be shown (0 = now)
-// the moment to show now (game clock)
-static double snap_target(SnapSet& S) {
-    double T = g_vr_display_time > 0 ? g_vr_display_time : plat_time();
-    if (T != S.last_T) {
-        double lead = T - S.time;
-        if (lead > 0 && lead < 0.25) {   // longer: no world frames for a while (menus, loading)
-            if (lead > S.win_max) S.win_max = lead;
-            if (T - S.win_start > 1.0) {
-                if (S.win_start > 0) {
-                    for (int i = 4; i > 0; i--) S.wins[i] = S.wins[i - 1];
-                    S.wins[0] = S.win_max;
-                    if (S.nwin < 5) S.nwin++;
-                }
-                S.win_start = T;
-                S.win_max = 0;
-            }
-        }
-        if (S.nwin) {
-            double w[5];
-            memcpy(w, S.wins, sizeof w);
-            std::sort(w, w + S.nwin);
-            double want = w[S.nwin / 2] + 0.002;
-            double step = S.last_T > 0 ? (T - S.last_T) * 0.01 : 0;
-            if (step > 0.002) step = 0.002;
-            S.delay += want > S.delay ? std::min(want - S.delay, step) : -std::min(S.delay - want, step);
-        }
-        S.last_T = T;
-    }
-    return T - S.delay;
-}
 bool level3d_vr_snapshot(u32 slot_addr) {
     slot_addr &= 0x1FFFFF;
     Capture* cap = nullptr;
@@ -479,13 +437,12 @@ bool level3d_vr_snapshot(u32 slot_addr) {
     if (!cap) return false;
     SnapSet& S = g_snap[cap->vk];
     if (cap->seq == S.seq && S.s[1].valid) return true;
-    S.older = std::move(S.s[0]);
     S.s[0] = std::move(S.s[1]);
     S.s[1] = *cap;
     S.seq = cap->seq;
-    double now = g_game_clock > 0 ? g_game_clock : plat_time();
-    S.time_older = S.time_prev;
-    S.time_prev = S.time;
+    double now = plat_time();
+    double dt = now - S.time;
+    if (dt > 0.01 && dt < 0.2) S.dt = S.dt * 0.8 + dt * 0.2;
     S.time = now;
     return true;
 }
@@ -510,23 +467,12 @@ static int g_vx_n;
 void level3d_vr_extra(const N3Vtx* v, int ntri, const N3Mat* m) { g_vx_v = v; g_vx_n = ntri; g_vx_m = m; }
 // t < 0: from the time since the newest frame arrived (0 = the frame before, 1 = the newest).
 // desktop: the game's own view (the sky keeps its own projection distance)
-static void emit_snap(SnapSet& S, float t, const VrEyeXf& xf, int cx1, int cy1, int cx2, int cy2, bool desktop) {
-    const Capture* pc = &S.s[1];
-    const Capture* pp = &S.s[0];
-    if (!pc->valid || !n3_available()) return;
-    if (t < 0.0f) {
-        // blend the two frames around the moment to show: the newest two, or (the newest arrived early)
-        // the two before - keeping three frames lets the moment advance evenly although frames arrive unevenly
-        double target = snap_target(S), span = S.time - S.time_prev, span0 = S.time_prev - S.time_older;
-        if (span <= 0.001 || span > 0.25) t = 1.0f;
-        else if (target < S.time_prev && S.older.valid && pp->valid && span0 > 0.001 && span0 < 0.25) {
-            pc = &S.s[0]; pp = &S.older;
-            t = (float)((target - S.time_older) / span0);
-        } else t = (float)((target - S.time_prev) / span);
-    }
+static void emit_snap(const SnapSet& S, float t, const VrEyeXf& xf, int cx1, int cy1, int cx2, int cy2, bool desktop) {
+    const Capture& cur = S.s[1];
+    const Capture& prv = S.s[0];
+    if (!cur.valid || !n3_available()) return;
+    if (t < 0.0f) t = (float)((plat_time() - S.time) / S.dt);
     t = t < 0.0f ? 0.0f : t > 1.0f ? 1.0f : t;
-    const Capture& cur = *pc;
-    const Capture& prv = *pp;
     Camera cam = cur.cam;
     bool mix = prv.valid && t < 1.0f;
     if (mix) {
@@ -604,7 +550,7 @@ void level3d_vr_emit(float t, const VrEyeXf& xf, int cx1, int cy1, int cx2, int 
 bool level3d_desktop_emit(u32 slot_addr, int off_x, int off_y, int cx1, int cy1, int cx2, int cy2) {
     slot_addr &= 0x1FFFFF;
     for (int vk = 0; vk < 2; vk++) {
-        SnapSet& S = g_snap[vk];
+        const SnapSet& S = g_snap[vk];
         const Capture& c = S.s[1];
         if (!c.valid || slot_addr < c.ot_lo || slot_addr >= c.ot_hi) continue;
         // the game's projection in true camera space: sx = OFX + x * S * H / z (widescreen narrows x)
@@ -625,7 +571,7 @@ void level3d_reset() {
     for (auto& c : g_cap) c.valid = false;
     g_last_ok[0] = g_last_ok[1] = false;
     g_last_groups[0].clear(); g_last_groups[1].clear();
-    for (auto& S : g_snap) S.s[0].valid = S.s[1].valid = S.older.valid = false;
+    for (auto& S : g_snap) S.s[0].valid = S.s[1].valid = false;
 }
 
 // ---- MeshFX effect meshes (80086810; see re/notes_models.md) ---------------------------------
